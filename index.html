@@ -1,0 +1,1364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Assistant</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', sans-serif;
+            background: #F4F4F4;
+            min-height: 100vh;
+            display: flex;
+            overflow-x: hidden;
+        }
+
+        .sidebar {
+            width: 280px;
+            background: #192735;
+            color: #FFFFFF;
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            flex-direction: column;
+            transition: width 0.3s ease;
+            height: 100vh;
+            position: fixed;
+            left: 0;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .sidebar.minimized {
+            width: 50px;
+            overflow: hidden;
+        }
+
+        .sidebar.minimized .sidebar-content {
+            display: none;
+        }
+
+        .sidebar-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .toggle-btn {
+            background: none;
+            border: none;
+            color: #FFFFFF;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        .sidebar-content {
+            padding: 16px 24px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .session-list {
+            list-style: none;
+            margin-top: 10px;
+            flex-grow: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+
+        .session-list li {
+            padding: 8px 12px;
+            font-size: 14px;
+            color: #FFFFFF;
+            cursor: pointer;
+            border-radius: 6px;
+            margin-bottom: 4px;
+            flex-shrink: 0;
+        }
+
+        .session-list li:hover {
+            background-color: #333333;
+        }
+
+        .session-list li.active {
+            background-color: #444444;
+            font-weight: 600;
+        }
+
+        .main-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            margin-left: 280px;
+            transition: margin-left 0.3s ease;
+            min-height: 100vh;
+        }
+
+        .main-wrapper.minimized-sidebar {
+            margin-left: 50px;
+        }
+
+        .header {
+            padding: 24px 24px;
+            background: #192735;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            flex-shrink: 0;
+            min-height: 80px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 4px;
+        }
+
+        .header p {
+            color: #FFFFFF;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .session-btn {
+            background-color: #444;
+            color: #FFFFFF;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .session-btn:hover {
+            background-color: #555;
+        }
+
+        .session-btn.new-chat {
+            background-color: #C3A36D;
+            padding: 6px 16px;
+            font-weight: 600;
+        }
+
+        .session-btn.new-chat:hover {
+            background-color: #5a6268;
+        }
+
+        .status-badge {
+            font-size: 12px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-badge.connecting {
+            color: #1a5f56;
+        }
+
+        .status-badge.connected {
+            color: #FFFFFF;
+        }
+
+        .status-badge.offline {
+            color: white;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ef4444;
+        }
+
+        .status-indicator.online {
+            background: #10b981;
+        }
+
+        .status-indicator.offline {
+            background: #ef4444;
+        }
+
+        .status-indicator.connecting {
+            background: #f59e0b;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+            width: 100%;
+            padding-bottom: 40px;
+        }
+
+        .chat-content {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            display: flex;
+            flex-direction: column;
+            min-height: calc(100vh - 160px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        .messages {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            min-height: 400px;
+            overflow-y: auto;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .message.user {
+            background: #809ebd;
+            color: #ffffff;
+            align-self: flex-end;
+            margin-left: auto;
+            font-weight: 500;
+        }
+
+        .message.assistant {
+            background: #f3f4f6;
+            color: #374151;
+            align-self: flex-start;
+            border: 1px solid #e5e7eb;
+            white-space: pre-wrap;
+        }
+
+        .message.assistant strong {
+            font-weight: 600;
+            color: #1f2937;
+        }
+
+        .message.system {
+            background: #FFFFFF;
+            color: #4682B4;
+            align-self: center;
+            border: none;
+            max-width: 90%;
+            text-align: center;
+            font-style: italic;
+        }
+
+        .graph-container {
+            height: 400px;
+            margin: 10px 0;
+            background: #fafafa;
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .input-area {
+            padding: 16px 20px;
+            background: white;
+            border-top: 1px solid #e5e7eb;
+            border-radius: 0 0 12px 12px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-container {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        #messageInput {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #94B6E9;
+            border-radius: 8px;
+            font-size: 14px;
+            resize: none;
+            outline: none;
+            font-family: inherit;
+            max-height: 120px;
+            padding-left: 80px;
+            margin-left: 4px;
+            transition: padding-left 0.3s ease;
+        }
+
+        #messageInput:focus {
+            border-color: #000000;
+            box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.2);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            height: 100%;
+        }
+
+        #sendBtn {
+            background: #c3a36d;
+            color: #FFFFFF;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            align-self: center;
+            margin-top: 0;
+            margin-bottom: 0;
+        }
+
+        #sendBtn:hover:not(:disabled) {
+            background: #333333;
+        }
+
+        #sendBtn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        #sendBtn.only-arrow {
+            padding-left: 12px;
+            padding-right: 12px;
+        }
+
+        #sendBtn.only-arrow span.text {
+            display: none;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 12px 20px;
+            background: #f3f4f6;
+            border-radius: 12px;
+            margin: 8px 0;
+            align-self: flex-start;
+            border: 1px solid #e5e7eb;
+        }
+
+        .thinking-text {
+            font-weight: 500;
+            color: #4b5563;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-style: italic;
+        }
+
+        .thinking-text::before {
+            content: '';
+            width: 12px;
+            height: 12px;
+            border: 2px solid #4b5563;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .sidebar.minimized .sidebar-header h2 {
+            display: none;
+            font-size: 0;
+            line-height: 0;
+            overflow: hidden;
+        }
+
+        .sidebar.minimized .sidebar-header {
+            justify-content: center;
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        .inside-textarea-btn {
+            position: absolute;
+            left: 8px;
+            top: 8px;
+            height: 28px;
+            width: 28px;
+            background: transparent;
+            color: #c3a36d;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border-radius: 0;
+            box-shadow: none;
+        }
+
+        .inside-textarea-btn:focus {
+            outline: none;
+        }
+
+        .tools-textarea-btn {
+            position: absolute;
+            left: 44px;
+            top: 8px;
+            height: 28px;
+            width: 28px;
+            background: transparent;
+            color: #c3a36d;
+            border: none;
+            cursor: pointer;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border-radius: 0;
+            box-shadow: none;
+            font-size: 16px;
+        }
+
+        .tools-textarea-btn:focus {
+            outline: none;
+        }
+
+        .report-mode-tag {
+            position: absolute;
+            left: 80px;
+            top: 8px;
+            height: 28px;
+            background: #e8f4fd;
+            color: #0969da;
+            border: 1px solid #d1d9e0;
+            border-radius: 6px;
+            z-index: 2;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 8px;
+            font-size: 12px;
+            font-weight: 500;
+            pointer-events: all;
+            white-space: nowrap;
+            cursor: default;
+        }
+
+        .report-mode-tag.active {
+            display: flex;
+        }
+
+        .report-mode-tag .close-btn {
+            margin-left: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            color: #656d76;
+        }
+
+        .report-mode-tag .close-btn:hover {
+            color: #ef4444;
+        }
+
+        .input-container.report-mode #messageInput {
+            padding-left: 190px;
+        }
+
+        .input-container.report-mode .inside-textarea-btn,
+        .input-container.report-mode .tools-textarea-btn {
+            opacity: 0.7;
+        }
+
+        .tools-dropdown {
+            position: absolute;
+            left: 44px;
+            top: 40px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+            z-index: 10;
+            min-width: 160px;
+            padding: 4px 0;
+            display: none;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .tools-dropdown.show {
+            display: flex;
+        }
+
+        .tools-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: none;
+            border: none;
+            color: #b89b6a;
+            font-size: 14px;
+            font-weight: 500;
+            padding: 8px 16px;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background 0.2s;
+            text-align: left;
+            width: 100%;
+        }
+
+        .tools-menu-item:hover {
+            background: #f3f3f3;
+        }
+
+        .tools-menu-icon {
+            display: flex;
+            align-items: center;
+            width: 16px;
+            height: 16px;
+        }
+
+        .tools-menu-text {
+            display: inline-block;
+        }
+
+        .report-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #c3a36d;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            display: none;
+            font-weight: 500;
+        }
+
+        .report-status.show {
+            display: block;
+        }
+
+        .report-status.success {
+            background: #10b981;
+        }
+
+        .report-status.error {
+            background: #ef4444;
+        }
+
+        .report-mode-indicator {
+            position: absolute;
+            left: 12px;
+            top: 12px;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            background: #c3a36d;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            z-index: 3;
+        }
+
+        .report-mode-indicator.active {
+            display: none; /* Hide this - we're using the inline tag instead */
+        }
+
+        .input-container.report-mode #messageInput {
+            border-color: #c3a36d;
+            background: #fffbf5;
+        }
+
+        .input-container.report-mode #messageInput::placeholder {
+            color: #b89b6a;
+        }
+
+        #sendBtn.report-mode {
+            background: #c3a36d;
+            border: 2px solid #a88a5a;
+        }
+
+        #sendBtn.report-mode:hover:not(:disabled) {
+            background: #a88a5a;
+        }
+
+        .cancel-report-btn {
+            position: absolute;
+            right: 8px;
+            top: 8px;
+            height: 24px;
+            width: 24px;
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            z-index: 3;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .cancel-report-btn.active {
+            display: flex;
+        }
+
+        .cancel-report-btn:hover {
+            background: #dc2626;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 200px;
+            }
+            .sidebar.minimized {
+                width: 50px;
+            }
+            .main-wrapper {
+                margin-left: 200px;
+            }
+            .main-wrapper.minimized-sidebar {
+                margin-left: 50px;
+            }
+            .chat-container {
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="report-status" id="reportStatus">
+        <span id="reportStatusText">Generating report...</span>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h2>Chats</h2>
+            <button class="toggle-btn" id="toggleSidebar">≪</button>
+        </div>
+        <div class="sidebar-content">
+            <button class="session-btn new-chat" id="newChatBtn">New Chat</button>
+            <ul class="session-list" id="sessionList">
+                <li>Chat Session 1</li>
+                <li>Chat Session 2</li>
+                <li>Chat Session 3</li>
+                <li>Chat Session 4</li>
+                <li>Chat Session 5</li>
+                <li>Chat Session 6</li>
+                <li>Chat Session 7</li>
+                <li>Chat Session 8</li>
+                <li>Chat Session 9</li>
+                <li>Chat Session 10</li>
+                <li>Chat Session 11</li>
+                <li>Chat Session 12</li>
+                <li>Chat Session 13</li>
+                <li>Chat Session 14</li>
+                <li>Chat Session 15</li>
+                <li>Chat Session 16</li>
+                <li>Chat Session 17</li>
+                <li>Chat Session 18</li>
+                <li>Chat Session 19</li>
+                <li>Chat Session 20</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="main-wrapper" id="mainWrapper">
+        <div class="header">
+            <div class="header-left">
+                <div>
+                    <div class="logo-group">
+                        <div class="logo-image-box"></div>
+                        <h1>Smart Assistant</h1>
+                    </div>
+                    <p>Ask questions about your data and get instant insights</p>
+                </div>
+            </div>
+            <div class="header-controls">
+                <div class="status-badge offline" id="connectionBadge">
+                    <div class="status-indicator" id="statusIndicator"></div>
+                    <span id="statusText">OFFLINE</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-content">
+                <div class="messages" id="messages"></div>
+                <div class="typing-indicator" id="typingIndicator">
+                    <span class="thinking-text">Thinking...</span>
+                </div>
+                <div class="input-area">
+                    <div class="input-container" id="inputContainer">
+                        <textarea
+                            id="messageInput"
+                            placeholder="Ask a question about your data..."
+                            rows="1"
+                        ></textarea>
+                        <button id="plusBtn" class="inside-textarea-btn" title="Upload a file">+</button>
+                        <button id="toolsBtn" class="tools-textarea-btn" title="Choose a tool">⚙️</button>
+                        <div id="reportModeTag" class="report-mode-tag">
+                            📊 Report <span class="close-btn" id="closeReportMode">×</span>
+                        </div>
+
+                        <div class="report-mode-indicator" id="reportModeIndicator">
+                            📊 <span>Report</span>
+                        </div>
+
+                        <button id="cancelReportBtn" class="cancel-report-btn" title="Exit report mode">×</button>
+
+                        <div id="toolsDropdown" class="tools-dropdown">
+                            <button class="tools-menu-item" id="generateReportMenuItem">
+                                <div class="tools-menu-icon">📊</div>
+                                <span class="tools-menu-text">Generate Report</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="button-group">
+                        <button id="sendBtn"><span class="text">Send </span>➤</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class DataChatbot {
+            constructor() {
+                this.elements = {
+                    messages: document.getElementById('messages'),
+                    messageInput: document.getElementById('messageInput'),
+                    sendBtn: document.getElementById('sendBtn'),
+                    typingIndicator: document.getElementById('typingIndicator'),
+                    statusIndicator: document.getElementById('statusIndicator'),
+                    statusText: document.getElementById('statusText'),
+                    connectionBadge: document.getElementById('connectionBadge'),
+                    sessionList: document.getElementById('sessionList'),
+                    newChatBtn: document.getElementById('newChatBtn'),
+                    sidebar: document.getElementById('sidebar'),
+                    mainWrapper: document.getElementById('mainWrapper'),
+                    toggleSidebar: document.getElementById('toggleSidebar'),
+                    toolsBtn: document.getElementById('toolsBtn'),
+                    toolsDropdown: document.getElementById('toolsDropdown'),
+                    generateReportMenuItem: document.getElementById('generateReportMenuItem'),
+                    reportModeTag: document.getElementById('reportModeTag'),
+                    closeReportMode: document.getElementById('closeReportMode'),
+                    reportStatus: document.getElementById('reportStatus'),
+                    reportStatusText: document.getElementById('reportStatusText'),
+                    inputContainer: document.getElementById('inputContainer'),
+                    reportModeIndicator: document.getElementById('reportModeIndicator'),
+                    cancelReportBtn: document.getElementById('cancelReportBtn')
+                };
+
+                this.state = {
+                    isConnected: false,
+                    serverUrl: 'https://cfo-smartassistant.onrender.com',
+                    sessionId: this.generateDefaultSessionId(),
+                    availableSessions: [],
+                    chatHistory: [],
+                    messageCount: 0,
+                    endpoints: {
+                        health: '/health',
+                        analyze: '/api/fabric/intelligent',
+                        reportWorkflow: '/api/intelligent-workflow',
+                        chatSession: '/api/chat/session',
+                        chatMessages: '/api/chat/messages',
+                        chatSessions: '/api/chat/sessions',
+                        clearChat: '/api/chat/clear'
+                    },
+                    isSidebarMinimized: true,
+                    lastDataQuery: null,
+                    reportInProgress: false,
+                    reportMode: false
+                };
+
+                this.setupEventListeners();
+                this.setInitialSidebarState();
+                this.initializeChat();
+            }
+
+            generateDefaultSessionId() {
+                const now = new Date();
+                const dateString = `${now.getFullYear()}${(now.getMonth()+1).toString().padStart(2,'0')}${now.getDate().toString().padStart(2,'0')}`;
+                return `powerbi_${dateString}_default`;
+            }
+
+            setupEventListeners() {
+                this.elements.sendBtn.onclick = () => this.sendMessage();
+                this.elements.newChatBtn.onclick = () => this.createNewChat();
+                this.elements.toggleSidebar.onclick = () => this.toggleSidebar();
+
+                this.elements.toolsBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    this.toggleToolsDropdown();
+                };
+
+                this.elements.generateReportMenuItem.onclick = (e) => {
+                    e.stopPropagation();
+                    this.toggleReportMode();
+                    this.hideToolsDropdown();
+                };
+
+                this.elements.closeReportMode.onclick = (e) => {
+                    e.stopPropagation();
+                    this.exitReportMode();
+                };
+
+                this.elements.cancelReportBtn.onclick = () => {
+                    this.exitReportMode();
+                };
+
+                document.addEventListener('click', (e) => {
+                    if (!e.target.closest('.tools-textarea-btn') && !e.target.closest('.tools-dropdown')) {
+                        this.hideToolsDropdown();
+                    }
+                });
+
+                this.elements.messageInput.onkeypress = (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendMessage();
+                    }
+                };
+
+                this.elements.messageInput.oninput = () => this.autoResizeTextarea();
+            }
+
+            autoResizeTextarea() {
+                const input = this.elements.messageInput;
+                input.style.height = 'auto';
+                input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+            }
+
+            async initializeChat() {
+                this.updateConnectionStatus('connecting');
+                console.log('🔗 Attempting to connect to:', `${this.state.serverUrl}${this.state.endpoints.health}`);
+
+                try {
+                    const healthResponse = await fetch(`${this.state.serverUrl}${this.state.endpoints.health}`, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        },
+                        mode: 'cors'
+                    });
+
+                    console.log('🔗 Health response status:', healthResponse.status);
+
+                    if (!healthResponse.ok) {
+                        throw new Error(`Health check failed: ${healthResponse.status} ${healthResponse.statusText}`);
+                    }
+
+                    const healthData = await healthResponse.json();
+                    console.log('✅ Health check successful:', healthData);
+
+                    this.state.isConnected = true;
+                    this.updateConnectionStatus('connected');
+                    this.elements.messages.innerHTML = '';
+                    this.addMessage(`✅ Connected to Smart Assistant!`, 'system');
+                    this.addMessage('Ask me anything about your data for enhanced AI analysis, or use the tools menu to generate comprehensive reports...', 'system');
+                    await this.createNewChat(true);
+
+                } catch (error) {
+                    console.error('❌ Connection failed:', error);
+                    this.state.isConnected = false;
+                    this.updateConnectionStatus('offline');
+                    this.addMessage(`❌ Connection failed: ${error.message}`, 'system');
+                    this.addMessage(`🔧 Troubleshooting tips:\n• Make sure your server is running on port 8000\n• Check if http://localhost:8000/health works in your browser\n• Verify CORS is enabled on the server`, 'system');
+                }
+            }
+
+            async loadAvailableSessions() {
+                try {
+                    console.log('📋 Loading available sessions...');
+                    const response = await fetch(`${this.state.serverUrl}${this.state.endpoints.chatSessions}?date=all&limit=100`, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('📋 Server response:', data);
+                        this.state.availableSessions = data.sessions || [];
+                        this.updateSessionList();
+                        console.log(`📋 Loaded ${data.sessions.length} available sessions across all dates`);
+                    } else {
+                        console.error('❌ Failed to load sessions:', response.status);
+                    }
+                } catch (error) {
+                    console.error('❌ Failed to load sessions:', error);
+                }
+            }
+
+            updateSessionList() {
+                const list = this.elements.sessionList;
+                list.innerHTML = '';
+
+                console.log('🔄 Updating session list with', this.state.availableSessions.length, 'sessions');
+
+                if (this.state.availableSessions.length > 0) {
+                    this.state.availableSessions.sort((a, b) => {
+                        const dateA = a.last_message ? new Date(a.last_message) : new Date(0);
+                        const dateB = b.last_message ? new Date(b.last_message) : new Date(0);
+                        return dateB - dateA; // Descending order: latest first
+                    }).forEach(session => {
+                        const li = document.createElement('li');
+                        const displayName = session.display_name || session.first_question || 'Untitled Chat';
+                        li.textContent = displayName;
+                        li.dataset.sessionId = session.session_id;
+                        if (session.session_id === this.state.sessionId) {
+                            li.classList.add('active');
+                        }
+                        li.addEventListener('click', () => this.switchSession(session.session_id));
+                        list.appendChild(li);
+                    });
+                } else {
+                    const li = document.createElement('li');
+                    li.textContent = 'No sessions available';
+                    li.style.cursor = 'default';
+                    li.style.color = '#888888';
+                    list.appendChild(li);
+                }
+            }
+
+            async switchSession(sessionId) {
+                if (sessionId && sessionId !== this.state.sessionId) {
+                    this.state.sessionId = sessionId;
+                    this.elements.messages.innerHTML = '';
+                    this.addMessage(`🔄 Switched to chat: ${sessionId.split('_').pop()}`, 'system');
+                    await this.loadChatHistoryFromServer();
+                    this.updateSessionList();
+                }
+            }
+
+            async createNewChat(isInitialLoad = false) {
+                try {
+                    const response = await fetch(`${this.state.serverUrl}${this.state.endpoints.clearChat}?session=${encodeURIComponent(this.state.sessionId)}&create_new=true`, {
+                        method: 'POST',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.state.sessionId = data.new_session_id;
+                        this.elements.messages.innerHTML = '';
+                        this.addMessage(`💬 New chat started!`, 'system');
+                        this.addMessage('Ask me anything about your data for enhanced AI analysis, or use the tools menu to generate comprehensive reports...', 'system');
+                        await this.loadAvailableSessions();
+                        console.log(`💬 Created new chat: ${this.state.sessionId}`);
+                    }
+                } catch (error) {
+                    console.error('Failed to create new chat:', error);
+                    this.addMessage('❌ Failed to create new chat', 'system');
+                }
+            }
+
+            async loadChatHistoryFromServer() {
+                try {
+                    const response = await fetch(`${this.state.serverUrl}${this.state.endpoints.chatMessages}?session=${encodeURIComponent(this.state.sessionId)}&limit=20`, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.messages && data.messages.length > 0) {
+                            data.messages.forEach((msg) => {
+                                if (msg.type === 'user') {
+                                    this.addMessage(msg.content, 'user', false);
+                                } else if (msg.type === 'assistant') {
+                                    // Display enhanced_analysis if available, otherwise fall back to content
+                                    const messageContent = msg.enhanced_analysis || msg.content;
+                                    this.addMessage(messageContent, 'assistant', false);
+                                    if (msg.visualization) {
+                                        this.addVisualization(msg.visualization, msg.chart_explanation);
+                                    }
+                                }
+                            });
+                            console.log(`📜 Loaded ${data.messages.length} messages from server`);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Failed to load chat history:', error);
+                }
+            }
+
+            async sendMessage() {
+                const message = this.elements.messageInput.value.trim();
+                if (!message || !this.state.isConnected) return;
+
+                this.elements.messageInput.value = '';
+                this.autoResizeTextarea();
+                this.elements.sendBtn.disabled = true;
+                
+                this.addMessage(message, 'user');
+                this.showTypingIndicator();
+
+                try {
+                    let response;
+                    
+                    if (this.state.reportMode) {
+                        // Use workflow endpoint for report generation
+                        console.log('🔄 Using workflow endpoint for report generation');
+                        response = await this.callWorkflowEndpoint(message);
+                    } else {
+                        // Use regular analyze endpoint
+                        console.log('🔄 Using analyze endpoint for regular query');
+                        response = await this.callAnalyzeEndpoint(message);
+                    }
+
+                    this.hideTypingIndicator();
+                    
+                    if (response) {
+                        this.handleSuccessfulResponse(response, message);
+                    }
+
+                } catch (error) {
+                    console.error('❌ Message sending failed:', error);
+                    this.hideTypingIndicator();
+                    this.addMessage(`❌ Error: ${error.message}`, 'system');
+                } finally {
+                    this.elements.sendBtn.disabled = false;
+                }
+            }
+
+            async callAnalyzeEndpoint(message) {
+                const requestBody = {
+                    question: message,
+                    enable_ai_insights: true,
+                    enable_email_notification: false,
+                    email_recipients: []
+                };
+
+                console.log('📤 Sending to analyze endpoint:', requestBody);
+
+                const response = await fetch(`${this.state.serverUrl}${this.state.endpoints.analyze}?session=${encodeURIComponent(this.state.sessionId)}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(errorData.detail || `Server error: ${response.status}`);
+                }
+
+                return await response.json();
+            }
+
+            async callWorkflowEndpoint(message) {
+                const requestBody = {
+                    data_query: message,
+                    report_type: "executive",
+                    report_format: "pdf", 
+                    email_recipients: ["user@company.com"], // You can make this configurable
+                    subject_hint: `Analytics Report: ${message.substring(0, 50)}`,
+                    include_ai_analysis: true
+                };
+
+                console.log('📤 Sending to workflow endpoint:', requestBody);
+
+                const response = await fetch(`${this.state.serverUrl}${this.state.endpoints.reportWorkflow}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    mode: 'cors',
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+                    throw new Error(errorData.detail || `Server error: ${response.status}`);
+                }
+
+                const workflowResponse = await response.json();
+                
+                // For workflow, we return a formatted response that matches the analyze endpoint structure
+                return {
+                    question: message,
+                    analysis: `📊 **Report Generation Started**\n\n${workflowResponse.message}\n\n**Workflow ID:** ${workflowResponse.workflow_id}\n\n**Expected Filename:** ${workflowResponse.expected_filename}\n\n**Status:** ${workflowResponse.status}\n\nYour comprehensive report is being generated and will be available shortly. If email is configured, you'll receive it automatically.`,
+                    enhanced_analysis: `🤖 **AI-Enhanced Report Workflow**\n\nI've initiated an intelligent workflow to generate a comprehensive executive report based on your query. This process includes:\n\n• **Data Analysis:** Processing your query with advanced AI insights\n• **Report Generation:** Creating a professional PDF with visualizations\n• **Email Delivery:** Automatic delivery if configured\n• **SharePoint Upload:** Saving to your document library\n\nThe report will include executive summary, key insights, business implications, and actionable recommendations based on your data.`,
+                    result_count: 0,
+                    timestamp: workflowResponse.timestamp,
+                    report_mode: true,
+                    workflow_id: workflowResponse.workflow_id
+                };
+            }
+
+            handleSuccessfulResponse(response, originalMessage) {
+                // Display the enhanced analysis if available, otherwise fall back to regular analysis
+                let analysisToShow = response.enhanced_analysis || response.analysis || 'Analysis completed successfully.';
+                
+                // Format headings in the analysis
+                analysisToShow = this.formatAnalysisHeadings(analysisToShow);
+                
+                console.log('📊 Response received:', {
+                    hasEnhancedAnalysis: !!response.enhanced_analysis,
+                    hasRegularAnalysis: !!response.analysis,
+                    resultCount: response.result_count,
+                    hasVisualization: !!response.visualization,
+                    reportMode: !!response.report_mode
+                });
+
+                // Add the analysis message
+                this.addMessage(analysisToShow, 'assistant');
+
+                // Don't show "Found X records" message anymore
+
+                // Add visualization if available
+                if (response.visualization && !response.report_mode) {
+                    this.addVisualization(response.visualization, response.chart_explanation);
+                }
+
+                // Add SQL info if available (for non-report mode)
+                if (response.generated_sql && !response.report_mode) {
+                    console.log('🔍 Generated SQL:', response.generated_sql);
+                }
+
+                // Show report status if in report mode
+                if (response.report_mode && response.workflow_id) {
+                    this.showReportStatus(`Report generation initiated with ID: ${response.workflow_id}`, 'success');
+                }
+
+                // Update last data query for context
+                if (!response.report_mode) {
+                    this.state.lastDataQuery = originalMessage;
+                }
+            }
+
+            formatAnalysisHeadings(text) {
+                // Remove ### from headings and make them bold
+                return text.replace(/^### (.+)$/gm, '**$1**')
+                          .replace(/^## (.+)$/gm, '**$1**')
+                          .replace(/^# (.+)$/gm, '**$1**');
+            }
+
+            showTypingIndicator() {
+                this.elements.typingIndicator.style.display = 'block';
+                this.scrollToBottom();
+            }
+
+            hideTypingIndicator() {
+                this.elements.typingIndicator.style.display = 'none';
+            }
+
+            addMessage(text, type, shouldScroll = true) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${type}`;
+                
+                // Handle markdown-style bold text
+                if (type === 'assistant') {
+                    const formattedText = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                    messageDiv.innerHTML = formattedText;
+                } else {
+                    messageDiv.textContent = text;
+                }
+                
+                this.elements.messages.appendChild(messageDiv);
+
+                if (shouldScroll) {
+                    this.scrollToBottom();
+                }
+            }
+
+            addVisualization(chartConfig, explanation) {
+                const graphContainer = document.createElement('div');
+                graphContainer.className = 'graph-container';
+                
+                const canvas = document.createElement('canvas');
+                canvas.id = `chart_${Date.now()}`;
+                graphContainer.appendChild(canvas);
+                
+                this.elements.messages.appendChild(graphContainer);
+                
+                try {
+                    new Chart(canvas.getContext('2d'), chartConfig);
+                    
+                    if (explanation) {
+                        this.addMessage(`📊 ${explanation}`, 'system');
+                    }
+                } catch (error) {
+                    console.error('Chart creation failed:', error);
+                    this.addMessage('❌ Failed to create chart visualization', 'system');
+                }
+                
+                this.scrollToBottom();
+            }
+
+            scrollToBottom() {
+                setTimeout(() => {
+                    this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+                }, 100);
+            }
+
+            updateConnectionStatus(status) {
+                const indicator = this.elements.statusIndicator;
+                const text = this.elements.statusText;
+                const badge = this.elements.connectionBadge;
+
+                indicator.className = `status-indicator ${status}`;
+                badge.className = `status-badge ${status}`;
+
+                switch (status) {
+                    case 'connecting':
+                        text.textContent = 'CONNECTING';
+                        break;
+                    case 'connected':
+                        indicator.className = 'status-indicator online';
+                        text.textContent = 'ONLINE';
+                        break;
+                    case 'offline':
+                        text.textContent = 'OFFLINE';
+                        break;
+                }
+            }
+
+            setInitialSidebarState() {
+                if (this.state.isSidebarMinimized) {
+                    this.elements.sidebar.classList.add('minimized');
+                    this.elements.mainWrapper.classList.add('minimized-sidebar');
+                    this.elements.toggleSidebar.textContent = '≫';
+                }
+            }
+
+            toggleSidebar() {
+                this.state.isSidebarMinimized = !this.state.isSidebarMinimized;
+                
+                if (this.state.isSidebarMinimized) {
+                    this.elements.sidebar.classList.add('minimized');
+                    this.elements.mainWrapper.classList.add('minimized-sidebar');
+                    this.elements.toggleSidebar.textContent = '≫';
+                } else {
+                    this.elements.sidebar.classList.remove('minimized');
+                    this.elements.mainWrapper.classList.remove('minimized-sidebar');
+                    this.elements.toggleSidebar.textContent = '≪';
+                }
+            }
+
+            toggleToolsDropdown() {
+                this.elements.toolsDropdown.classList.toggle('show');
+            }
+
+            hideToolsDropdown() {
+                this.elements.toolsDropdown.classList.remove('show');
+            }
+
+            toggleReportMode() {
+                this.state.reportMode = !this.state.reportMode;
+                
+                if (this.state.reportMode) {
+                    this.elements.inputContainer.classList.add('report-mode');
+                    this.elements.sendBtn.classList.add('report-mode');
+                    this.elements.reportModeTag.classList.add('active');
+                    this.elements.messageInput.placeholder = "Ask for a comprehensive report (e.g., 'Generate executive summary of sales performance')...";
+                    this.showReportStatus('Report mode activated. Your next query will generate a comprehensive PDF report.', 'info');
+                } else {
+                    this.exitReportMode();
+                }
+            }
+
+            exitReportMode() {
+                this.state.reportMode = false;
+                this.elements.inputContainer.classList.remove('report-mode');
+                this.elements.sendBtn.classList.remove('report-mode');
+                this.elements.reportModeTag.classList.remove('active');
+                this.elements.messageInput.placeholder = "Ask a question about your data...";
+                this.hideReportStatus();
+            }
+
+            handleFileUpload() {
+                // Placeholder for file upload functionality
+                this.showReportStatus('File upload feature coming soon!', 'info');
+            }
+
+            openSettings() {
+                // Placeholder for settings functionality
+                this.showReportStatus('Settings panel coming soon!', 'info');
+            }
+
+            showReportStatus(message, type = 'info') {
+                const statusElement = this.elements.reportStatus;
+                const textElement = this.elements.reportStatusText;
+                
+                textElement.textContent = message;
+                statusElement.className = 'report-status show';
+                
+                if (type === 'success') {
+                    statusElement.classList.add('success');
+                } else if (type === 'error') {
+                    statusElement.classList.add('error');
+                }
+                
+                // Auto-hide after 5 seconds for non-error messages
+                if (type !== 'error') {
+                    setTimeout(() => {
+                        this.hideReportStatus();
+                    }, 5000);
+                }
+            }
+
+            hideReportStatus() {
+                this.elements.reportStatus.classList.remove('show', 'success', 'error');
+            }
+        }
+
+        // Initialize the chatbot when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new DataChatbot();
+        });
+    </script>
+</body>
+</html>
+
+
