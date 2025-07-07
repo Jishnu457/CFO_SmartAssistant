@@ -263,6 +263,8 @@ class DatabaseManager:
             logger.error("KQL connection test failed", error=str(e))
             return False
 
+db_manager = DatabaseManager()
+
 # CONSOLIDATED: Session management
 class SessionManager:
     """Centralized session management"""
@@ -288,6 +290,8 @@ class SessionManager:
         now = datetime.now()
         date_string = now.strftime("%Y%m%d")
         return f"powerbi_{date_string}_default"
+
+
 
 # CONSOLIDATED: Schema management with caching
 class SchemaManager:
@@ -455,6 +459,8 @@ class SchemaManager:
         self.cached_tables_info = None
         self.schema_cache_timestamp = None
 
+schema_manager = SchemaManager(db_manager)
+
 # CONSOLIDATED: Utility functions
 # ENHANCED: Utility functions with number formatting
 class Utils:
@@ -519,6 +525,7 @@ class Utils:
         question = question.lower().strip()
         question = re.sub(r'\s+', ' ', question)
         return question
+    
     @staticmethod
     def remove_sql_comments(sql: str) -> str:
         """Remove SQL comments while preserving string literals"""
@@ -692,7 +699,7 @@ class Utils:
     
     @staticmethod
     def clean_generated_sql(sql_text: str) -> str:
-        """Enhanced SQL cleaning with comment removal and GROUP BY validation"""
+        """Enhanced SQL cleaning with comment removal, GROUP BY validation, and syntax fixes"""
         print(f"🔍 CLEANING SQL INPUT: {sql_text[:100]}...") 
         if not sql_text:
             return ""
@@ -713,13 +720,26 @@ class Utils:
         # CRITICAL: Remove all comments from SQL
         sql = Utils.remove_sql_comments(sql)
         
-        # ⭐ SIMPLE DIRECT FIX - Replace all variations
+        # ⭐ ENHANCED SYNTAX FIXES
         sql = sql.replace('GROUP BY', 'GROUP BY ')  # Add space after
         sql = sql.replace('ORDER BY', 'ORDER BY ')  # Add space after
         sql = sql.replace('GROUP  BY', 'GROUP BY ')  # Fix double spaces
         sql = sql.replace('ORDER  BY', 'ORDER BY ')  # Fix double spaces
         
-        # Clean up the SQL (your existing logic)
+        
+        # Fix specific spacing issues
+        sql = sql.replace('GROUP BY[', 'GROUP BY [')  # Add space before bracket
+        sql = sql.replace('ORDER BY[', 'ORDER BY [')  # Add space before bracket
+        sql = sql.replace('GROUP BYDATEPART', 'GROUP BY DATEPART')  # Fix DATEPART spacing
+        sql = sql.replace('ORDER BYDATEPART', 'ORDER BY DATEPART')  # Fix DATEPART spacing
+        
+        sql = sql.replace(') GROUP BY', ' GROUP BY')  # Remove ) before GROUP BY
+        sql = sql.replace('GROUP BY GROUP BY', 'GROUP BY')  # Fix double GROUP BY
+        sql = sql.replace('WHERE SUM(', 'HAVING SUM(')  # Move SUM to HAVING
+        sql = sql.replace('WHERE COUNT(', 'HAVING COUNT(')  # Move COUNT to HAVING
+        sql = sql.replace('WHERE AVG(', 'HAVING AVG(')  # Move AVG to HAVING
+        
+        # Clean up the SQL (existing logic)
         lines = sql.split('\n')
         sql_lines = []
         in_select = False
@@ -756,16 +776,17 @@ class Utils:
         # Remove any remaining inline comments
         sql = Utils.remove_sql_comments(sql)
         
-        # ⭐ FINAL CLEANUP - Fix any remaining issues
+        # ⭐ FINAL CLEANUP - Fix any remaining syntax issues
         sql = sql.replace('GROUP BYDATEPART', 'GROUP BY DATEPART')
         sql = sql.replace('ORDER BYDATEPART', 'ORDER BY DATEPART')
         sql = sql.replace('GROUP BY BY', 'GROUP BY')
         sql = sql.replace('ORDER BY BY', 'ORDER BY')
         
-        # Clean up extra spaces
-        sql = ' '.join(sql.split())
+        # Clean up extra spaces but preserve single spaces
+        import re
+        sql = re.sub(r'\s+', ' ', sql)  # Replace multiple spaces with single space
         
-        # Basic validation (your existing logic)
+        # Basic validation
         if sql:
             sql_upper = sql.upper()
             
@@ -781,12 +802,6 @@ class Utils:
             if any(sql_upper.endswith(keyword) for keyword in ['FROM', 'SELECT', 'WHERE', 'AND', 'OR', 'JOIN', 'ON', 'GROUP BY']):
                 return ""
         
-        # Validate and fix GROUP BY issues (your existing logic)
-        if sql and 'GROUP BY' in sql.upper():
-            #sql, validation_msg = Utils.validate_group_by_syntax(sql)
-            #if validation_msg and "Auto-fixed" in validation_msg:
-                #logger.info("SQL auto-fixed", message=validation_msg)
-            pass
         print(f"🔍 CLEANED SQL OUTPUT: {sql[:100]}...")
         return sql
     
@@ -831,28 +846,24 @@ class Utils:
     
     @staticmethod
     def extract_context_from_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Extract context from query results"""
+        """✅ KEEP - Simplified version for KQL storage"""
         context = {}
+        
         if not results:
             return context
+        
+        # Simple extraction for KQL storage
         sample_row = results[0]
-        id_columns = [col for col in sample_row.keys() if col.lower().endswith('id')]
-        for id_col in id_columns:
-            unique_ids = list(set(str(row[id_col]) for row in results if row.get(id_col)))
-            if unique_ids:
-                context[f'{id_col.lower()}_list'] = unique_ids[:50]
-        identifier_patterns = ['name', 'code', 'key', 'reference']
-        for pattern in identifier_patterns:
-            matching_cols = [col for col in sample_row.keys() if pattern in col.lower()]
-            for col in matching_cols:
-                unique_values = list(set(str(row[col]) for row in results if row.get(col) and str(row[col]).strip()))
-                if unique_values and len(unique_values) <= 50:
-                    context[f'{col.lower()}_list'] = unique_values[:20]
+        all_columns = list(sample_row.keys())
+        
+        # Store basic info for KQL
+        context['_query_metadata'] = {
+            'total_records': len(results),
+            'columns_analyzed': all_columns,
+            'timestamp': datetime.now().isoformat()
+        }
+        
         return context
-
-# Initialize global instances
-db_manager = DatabaseManager()
-schema_manager = SchemaManager(db_manager)
 
 # Add SharePoint configuration to your environment variables or config
 class SharePointConfig:
@@ -1001,72 +1012,218 @@ class KQLStorage:
         except Exception as e:
             logger.error("Unexpected error creating KQL table", error=str(e))
             raise
+    async def get_last_query_response(self, session_id: str = None) -> Dict[str, Any]:
+        """Get the most recent query response from KQL for context"""
+        actual_session_id = session_id if session_id else "default-session-1234567890"
+        
+        last_response_query = f"""
+        ChatHistory_CFO
+        | where SessionID == '{actual_session_id}'
+        | where Question != 'tables_info' and Question != 'schema_info'
+        | order by Timestamp desc
+        | take 1
+        | project Question, Response, Context, Timestamp
+        """
+        
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.db_manager.kusto_client.execute(self.db_manager.kusto_database, last_response_query)
+            )
+            
+            if result.primary_results and len(result.primary_results[0]) > 0:
+                row = result.primary_results[0][0]
+                
+                # Parse the stored response
+                response_data = json.loads(row["Response"])
+                context_data = json.loads(row["Context"]) if row.get("Context") else {}
+                
+                return {
+                    "previous_question": row["Question"],
+                    "previous_response": response_data,
+                    "previous_context": context_data,
+                    "timestamp": row["Timestamp"],
+                    "has_data": True
+                }
+            
+            return {"has_data": False}
+            
+        except Exception as e:
+            logger.error("Failed to retrieve last query response", error=str(e), session_id=actual_session_id)
+            return {"has_data": False}
+    
+    # ✅ NEW: Get the last N query responses for richer context
+    async def get_recent_query_responses(self, session_id: str = None, limit: int = 3) -> List[Dict[str, Any]]:
+        """Get the last N query responses from KQL for richer context"""
+        actual_session_id = session_id if session_id else "default-session-1234567890"
+        
+        recent_responses_query = f"""
+        ChatHistory_CFO
+        | where SessionID == '{actual_session_id}'
+        | where Question != 'tables_info' and Question != 'schema_info'
+        | order by Timestamp desc
+        | take {limit}
+        | order by Timestamp asc
+        | project Question, Response, Context, Timestamp
+        """
+        
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: self.db_manager.kusto_client.execute(self.db_manager.kusto_database, recent_responses_query)
+            )
+            
+            responses = []
+            for row in result.primary_results[0]:
+                try:
+                    response_data = json.loads(row["Response"])
+                    context_data = json.loads(row["Context"]) if row.get("Context") else {}
+                    
+                    responses.append({
+                        "question": row["Question"],
+                        "response": response_data,
+                        "context": context_data,
+                        "timestamp": row["Timestamp"]
+                    })
+                    
+                except json.JSONDecodeError:
+                    continue
+            
+            logger.info("Retrieved recent responses for context", 
+                       session_id=actual_session_id, 
+                       count=len(responses))
+            return responses
+            
+        except Exception as e:
+            logger.error("Failed to retrieve recent responses", error=str(e), session_id=actual_session_id)
+            return []
+
     
     async def store_in_kql(self, question: str, response: Dict, context: List[Dict], session_id: str = None):
-        """Store query and response in KQL"""
+        """Store query and response in KQL - FIXED KustoResultRow access"""
+        print(f"🔍 DEBUG: store_in_kql CALLED")
+        print(f"🔍 DEBUG: Question: '{question}'")
+        print(f"🔍 DEBUG: Raw Session ID: {repr(session_id)}")
         
         # Skip storing schema-related queries
         if question.lower() in ['tables_info', 'schema_info'] or 'tables_info' in str(response):
-            logger.info("Skipping KQL storage for schema query")
+            print(f"🔍 DEBUG: Skipping KQL storage for schema query: {question}")
             return
         
         # Use provided session ID or fall back to fixed session
         actual_session_id = session_id if session_id else "default-session-1234567890"
         
         conversation_id = str(uuid.uuid4())
-        # Use proper datetime format for KQL
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         
         try:
-            # Safely serialize the response and context
-            response_json = json.dumps(response, default=Utils.safe_json_serialize)
-            context_json = json.dumps(context, default=Utils.safe_json_serialize)
+            # Better context extraction
+            if response.get('sample_data'):
+                extracted_context = Utils.extract_context_from_results(response['sample_data'])
+            else:
+                extracted_context = context if isinstance(context, dict) else {}
             
-            print(f"\n🔍 STORAGE DEBUG:")
-            print(f"  SessionID: {actual_session_id}")
-            print(f"  Timestamp: {timestamp}")
-            print(f"  Question: {question[:50]}...")
-            print(f"  Response JSON length: {len(response_json)}")
+            # Safely serialize
+            response_json = json.dumps(response, default=Utils.safe_json_serialize, ensure_ascii=False)
+            context_json = json.dumps(extracted_context, default=Utils.safe_json_serialize, ensure_ascii=False)
+        
+            print(f"🔍 DEBUG: Response JSON length: {len(response_json)}")
+            print(f"🔍 DEBUG: Response JSON preview: {response_json[:100]}...")
+        
+            # Clean session ID (keep your existing logic)
+            clean_session_id = str(actual_session_id).strip()
             
-            # Clean data for KQL
-            clean_session_id = actual_session_id.replace('"', '').replace("'", "")
-            clean_question = question.replace('"', '""').replace('\n', ' ').replace('\r', ' ')
-            clean_response = response_json.replace('"', '""').replace('\n', ' ').replace('\r', ' ')
-            clean_context = context_json.replace('"', '""').replace('\n', ' ').replace('\r', ' ')
+            if clean_session_id.startswith('"') and clean_session_id.endswith('"'):
+                clean_session_id = clean_session_id[1:-1]
+            if clean_session_id.startswith("'") and clean_session_id.endswith("'"):
+                clean_session_id = clean_session_id[1:-1]
+                
+            clean_session_id = clean_session_id.replace('"', '').replace("'", "")
             
-            # Use correct KQL syntax with datetime() function - NO COLUMN HEADERS
+            print(f"🔍 DEBUG: Cleaned Session ID: '{clean_session_id}' (no quotes)")
+            
+            # ✅ CRITICAL FIX: Use base64 encoding to prevent JSON corruption
+            import base64
+            
+            # Clean question but encode JSON data as base64
+            clean_question = question.replace('\n', ' ').replace('\r', ' ').strip()
+            
+            # Encode JSON as base64 to avoid CSV parsing issues
+            response_b64 = base64.b64encode(response_json.encode('utf-8')).decode('ascii')
+            context_b64 = base64.b64encode(context_json.encode('utf-8')).decode('ascii')
+            
+            print(f"🔍 DEBUG: Using base64 encoding for JSON (lengths: response={len(response_b64)}, context={len(context_b64)})")
+            
+            # ✅ FIXED: Store base64 encoded data (no quote escaping needed)
             ingest_query = f'''.ingest inline into table ChatHistory_CFO <|
-    "{clean_session_id}",datetime({timestamp}),"{conversation_id}","{clean_question}","{clean_response}","{clean_context}"'''
+    {clean_session_id},datetime({timestamp}),{conversation_id},{clean_question},{response_b64},{context_b64}'''
             
-            print(f"  Executing KQL ingest...")
-            print(f"  Query: {ingest_query[:200]}...")
+            print(f"🔍 DEBUG: KQL Ingest Preview:")
+            print(f"  SessionID: '{clean_session_id}'")
+            print(f"  ConversationID: '{conversation_id}'")
+            print(f"  Question: '{clean_question[:50]}...'")
+            print(f"  Response: base64 encoded ({len(response_b64)} chars)")
             
             # Execute the ingest
             result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: self.db_manager.kusto_client.execute(self.db_manager.kusto_database, ingest_query)
             )
             
-            print(f"  ✅ KQL execution completed")
+            print(f"✅ DEBUG: KQL ingest completed successfully")
             
-            # Verify the insert worked
-            verify_query = f'ChatHistory_CFO | where ConversationID == "{conversation_id}" | count'
+            # ✅ FIXED: Proper KustoResultRow access
+            verify_query = f"""
+            ChatHistory_CFO
+            | where SessionID has '{clean_session_id}'
+            | where ConversationID == '{conversation_id}'
+            | extend Decoded_Response = base64_decode_tostring(Response)
+            | project SessionID, Question, Decoded_Response
+            """
+            
+            await asyncio.sleep(1)
+            
             verify_result = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: self.db_manager.kusto_client.execute(self.db_manager.kusto_database, verify_query)
             )
             
-            count = verify_result.primary_results[0][0]["Count"] if verify_result.primary_results[0] else 0
-            print(f"  ✅ Verification: {count} record(s) inserted for conversation {conversation_id}")
+            verify_records = verify_result.primary_results[0] if verify_result.primary_results else []
             
-            if count > 0:
-                logger.info("Stored in KQL successfully", session_id=actual_session_id, conversation_id=conversation_id)
+            if verify_records:
+                # ✅ FIXED: Access KustoResultRow by column name, not .get()
+                for record in verify_records:
+                    try:
+                        # Access by column name directly
+                        decoded_response = record["Decoded_Response"]
+                        session_id_check = record["SessionID"]
+                        question_check = record["Question"]
+                        
+                        print(f"✅ DEBUG: Verification successful")
+                        print(f"  SessionID: {session_id_check}")
+                        print(f"  Question: {question_check[:50]}...")
+                        print(f"  Decoded response: {decoded_response[:100]}...")
+                        
+                        # Test JSON parsing
+                        try:
+                            test_json = json.loads(decoded_response)
+                            print(f"✅ DEBUG: JSON parsing test PASSED")
+                        except json.JSONDecodeError as e:
+                            print(f"❌ DEBUG: JSON parsing test FAILED: {e}")
+                            
+                    except KeyError as e:
+                        print(f"❌ DEBUG: Column access error: {e}")
+                    except Exception as e:
+                        print(f"❌ DEBUG: Verification error: {e}")
             else:
-                logger.warning("KQL insert may have failed - no records found", conversation_id=conversation_id)
+                print(f"❌ DEBUG: Verification failed - no records found")
+            
+            logger.info("KQL storage successful with base64 encoding", 
+                    session_id=clean_session_id,
+                    conversation_id=conversation_id,
+                    verification_count=len(verify_records))
             
         except Exception as e:
-            print(f"  ❌ KQL storage failed: {str(e)}")
-            logger.error("Failed to store in KQL", session_id=actual_session_id, error=str(e), conversation_id=conversation_id)
-            print(f"  💡 Continuing without KQL storage...")
-            return
+            print(f"❌ DEBUG: KQL storage failed: {e}")
+            logger.error("KQL storage failed", error=str(e))
+            raise
+
     
     async def get_from_kql_cache(self, question: str, session_id: str = None) -> Optional[Dict]:
         """Retrieve cached response from KQL"""
@@ -1161,6 +1318,7 @@ class AIServiceManager:
             if not project_endpoint:
                 logger.info("AI_PROJECT_ENDPOINT not set, AI Foundry features disabled")
                 self.intelligent_agent = None  # ✅ Explicitly set to None
+                self.ai_foundry_enabled = False
                 return False
                 
             credential = DefaultAzureCredential()
@@ -1173,8 +1331,14 @@ class AIServiceManager:
             logger.info("Azure AI Foundry client initialized successfully")
             self.ai_foundry_enabled = True
             
-            # ✅ Initialize intelligent agent properly
-            self.intelligent_agent = IntelligentAnalyticsAgent(self.project_client)
+            
+            try:
+                self.intelligent_agent = IntelligentAnalyticsAgent(self.project_client)
+                logger.info("Intelligent analytics agent initialized successfully")
+            except Exception as agent_error:
+                logger.error("Failed to initialize intelligent agent", error=str(agent_error))
+                self.intelligent_agent = None  # ✅ Set to None on agent failure
+                # Keep AI Foundry enabled but without the intelligent agent
             
             return True
             
@@ -2268,16 +2432,114 @@ class VisualizationManager:
 # Initialize visualization manager
 viz_manager = VisualizationManager(ai_services)
 
-# CONSOLIDATED: Intent analysis and prompt management
+# Fix the PromptManager class - remove the enhanced_prompt_manager reference
+
 class PromptManager:
     """Centralized prompt and intent management with enhanced GROUP BY rules"""
     
     def __init__(self, ai_services):
         self.ai_services = ai_services
+        # Remove the enhanced_prompt_manager initialization that was causing the error
     
     def load_base_prompt(self):
-        """Updated base prompt with STRICT GROUP BY rules and trend analysis examples"""
-        return """You are an expert SQL analyst. You must respond in this EXACT format:
+        """Enhanced base prompt with comprehensive few-shot learning"""
+        
+        few_shot_examples = """
+------ EXAMPLE 1: Revenue Analysis with Proper Client Filtering
+User: Show me revenue for Brown Ltd in 2024 and 2025
+System: You need to filter by client and use DATEPART for year extraction from date columns:
+
+SELECT 
+    [Client],
+    DATEPART(YEAR, [Date]) AS [Year],
+    SUM([Revenue]) AS [Total_Revenue]
+FROM [dbo].[Financial] 
+WHERE [Client] = 'Brown Ltd' 
+    AND DATEPART(YEAR, [Date]) IN (2024, 2025)
+GROUP BY [Client], DATEPART(YEAR, [Date])
+ORDER BY [Year];
+
+------ EXAMPLE 2: Contextual Follow-up Analysis with Context Preservation
+User: Why does the revenue behave this way?
+System: To analyze revenue behavior, calculate growth rates and trends using the same client filter from previous query:
+
+SELECT 
+    [Client],
+    DATEPART(YEAR, [Date]) AS [Year],
+    DATEPART(QUARTER, [Date]) AS [Quarter],
+    SUM([Revenue]) AS Quarterly_Revenue,
+    LAG(SUM([Revenue])) OVER (
+        PARTITION BY [Client] 
+        ORDER BY DATEPART(YEAR, [Date]), DATEPART(QUARTER, [Date])
+    ) AS Previous_Quarter,
+    CASE 
+        WHEN LAG(SUM([Revenue])) OVER (
+            PARTITION BY [Client] 
+            ORDER BY DATEPART(YEAR, [Date]), DATEPART(QUARTER, [Date])
+        ) > 0 
+        THEN ((SUM([Revenue]) - LAG(SUM([Revenue])) OVER (
+            PARTITION BY [Client] 
+            ORDER BY DATEPART(YEAR, [Date]), DATEPART(QUARTER, [Date])
+        )) / LAG(SUM([Revenue])) OVER (
+            PARTITION BY [Client] 
+            ORDER BY DATEPART(YEAR, [Date]), DATEPART(QUARTER, [Date])
+        )) * 100 
+        ELSE NULL 
+    END AS Growth_Rate_Percent
+FROM [dbo].[Financial] 
+WHERE [Client] = 'Brown Ltd' 
+    AND DATEPART(YEAR, [Date]) IN (2024, 2025)
+GROUP BY [Client], DATEPART(YEAR, [Date]), DATEPART(QUARTER, [Date])
+ORDER BY [Year], [Quarter];
+
+------ EXAMPLE 3: Profit & Loss Report Structure
+User: Create a P&L report for 2025
+System: For comprehensive P&L analysis, aggregate multiple financial metrics by time period:
+
+SELECT 
+    DATEPART(QUARTER, [Date]) AS [Quarter],
+    DATEPART(MONTH, [Date]) AS [Month],
+    SUM([Revenue]) AS Total_Revenue,
+    SUM([Gross Profit]) AS Total_Gross_Profit,
+    SUM([Net Income]) AS Total_Net_Income,
+    (SUM([Gross Profit]) / NULLIF(SUM([Revenue]), 0)) * 100 AS Gross_Margin_Percent,
+    (SUM([Net Income]) / NULLIF(SUM([Revenue]), 0)) * 100 AS Net_Margin_Percent
+FROM [dbo].[Financial] 
+WHERE DATEPART(YEAR, [Date]) = 2025
+GROUP BY DATEPART(QUARTER, [Date]), DATEPART(MONTH, [Date])
+ORDER BY [Quarter], [Month];
+
+------ EXAMPLE 4: Context Preservation for Follow-ups
+User: Show me their departments (after previous client query)
+System: When user refers to "their" or "them", preserve the client filter from previous query:
+
+SELECT 
+    [Client],
+    [Department], 
+    COUNT(*) AS Employee_Count,
+    AVG([Revenue]) AS Avg_Revenue_Per_Employee
+FROM [dbo].[Financial] 
+WHERE [Client] = 'Brown Ltd'  -- Preserve client context
+GROUP BY [Client], [Department]
+ORDER BY Avg_Revenue_Per_Employee DESC;
+
+------ EXAMPLE 5: Date Handling Best Practices
+User: Show trends over the last 6 months
+System: Use DATEADD for relative date filtering and handle NULL dates properly:
+
+SELECT 
+    DATEPART(YEAR, [Date]) AS [Year],
+    DATEPART(MONTH, [Date]) AS [Month],
+    COUNT(*) AS Record_Count,
+    SUM([Revenue]) AS Monthly_Revenue
+FROM [dbo].[Financial] 
+WHERE [Date] >= DATEADD(MONTH, -6, GETDATE())
+    AND [Date] IS NOT NULL
+GROUP BY DATEPART(YEAR, [Date]), DATEPART(MONTH, [Date])
+ORDER BY [Year], [Month];
+"""
+        
+        return f"""You are an expert SQL analyst specializing in financial data analysis. You must respond in this EXACT format:
 
 SQL_QUERY:
 [Complete SQL statement using exact column names from schema]
@@ -2285,45 +2547,38 @@ SQL_QUERY:
 ANALYSIS:
 [Brief explanation of results and insights]
 
-🔧 ESSENTIAL RULES:
-1. Use ONLY columns that exist in the provided schema below
-2. Every non-aggregate column in SELECT must be in GROUP BY
-3. For time analysis: Use DATEPART(MONTH/YEAR, [Date_Column]) not text month columns
-4. For calculations: Use SUM(), COUNT(), AVG() on numeric columns
-5. Check schema carefully - don't assume column names
-6. For financial reports: Use tables that contain financial data (revenue, profit, expenses)
+🎯 CRITICAL SUCCESS FACTORS:
 
-✅ GOOD PATTERNS:
-- TABLE SELECTION: Pick table with financial columns for Profit and Loss reports
-- GROUP BY: All non-aggregate SELECT columns included
-- TIME: DATEPART(MONTH, [Date]) for monthly grouping  
-- CALC: SUM([Amount]), COUNT(*), AVG([Value])
-- FILTER: WHERE [Date] >= DATEADD(MONTH, -6, GETDATE())
+1. **Schema Adherence**: Use ONLY columns that exist in the provided schema
+2. **Context Preservation**: For follow-up questions, maintain client/entity filters from previous queries
+3. **Professional Formatting**: Use clean, readable SQL formatting with proper indentation
+4. **Date Handling**: Use DATEPART(YEAR/MONTH/QUARTER, [Date]) for date-based grouping
+5. **Analytical Depth**: For "why" questions, include growth rates, trends, and comparisons
 
-❌ AVOID:
-- Using columns not in schema
-- Missing columns in GROUP BY
-- Grouping by static text fields for time analysis
-- Wrong table for the question type
+📚 LEARN FROM THESE EXAMPLES:
+{few_shot_examples}
 
-CHART GENERATION RULES:
-- Charts are automatically generated when questions contain words like: chart, graph, plot, visualize, trend, distribution, compare
-- The system will analyze your SQL results and create appropriate Chart.js visualizations
-- No need to include chart blocks in your response - they're generated automatically
-- Focus on creating SQL that returns good data for visualization (aggregated, grouped, limited rows)
+✅ PROVEN PATTERNS:
+- Client Analysis: WHERE [Client] = 'ClientName' AND DATEPART(YEAR, [Date]) IN (2024, 2025)
+- Growth Calculation: LAG() OVER (PARTITION BY [Client] ORDER BY [Year], [Quarter])  
+- Trend Analysis: Use DATEPART for time-based grouping
+- Context Questions: Preserve WHERE conditions from previous successful queries
+- P&L Reports: Aggregate Revenue, Gross Profit, Net Income with margin calculations
 
+❌ AVOID THESE COMMON MISTAKES:
+- Missing spaces: GROUP BY[column] → should be GROUP BY [column]
+- Wrong columns: Use exact names from schema, not assumptions
+- Lost context: Follow-up questions must preserve client/entity filters
+- Incomplete GROUP BY: All non-aggregate SELECT columns must be in GROUP BY
+- Date errors: Use DATEPART() for date extraction, handle NULLs
 
-WHAT NOT TO WRITE:
-❌ Missing columns in GROUP BY
-❌ Incomplete ORDER BY clauses  
-❌ DATEPART in SELECT but not in GROUP BY
-❌ Multiple SELECT statements
-❌ CTEs with WITH clauses
-❌ Partial or broken SQL
-❌ AVG([BooleanColumn]) without CASE conversion
-❌ Complex nested queries
+🔧 SQL SYNTAX RULES:
+- Always space after keywords: "GROUP BY [column]" not "GROUP BY[column]"
+- Use proper WHERE clause combining: WHERE condition1 AND condition2
+- Handle division by zero: NULLIF(denominator, 0) in calculations
+- Order results logically: ORDER BY [Year], [Quarter], [Month]
 
-REMEMBER: If you include a column in SELECT without an aggregate function, it MUST be in GROUP BY!
+REMEMBER: Your goal is to generate SQL that a financial analyst can immediately execute to get business insights!
 """
     
     def format_schema_for_prompt(self, tables_info: List[Dict]) -> str:
@@ -2332,27 +2587,27 @@ REMEMBER: If you include a column in SELECT without an aggregate function, it MU
     def filter_schema_for_question(self, question: str, tables_info: List[Dict]) -> List[Dict]:
         question_lower = question.lower()
         
-        # For P&L/financial questions, force BalanceSheet to the top
-        if any(word in question_lower for word in ['p&l', 'profit', 'loss', 'financial']):
+        # For P&L/financial questions, force Financial table to the top
+        if any(word in question_lower for word in ['p&l', 'profit', 'loss', 'financial', 'revenue']):
             result = []
-            balance_sheet = None
+            financial_table = None
             other_financial = []
             remaining = []
             
             for table in tables_info:
                 table_name = table.get('table', '').lower()
                 
-                # Find BalanceSheet first
-                if 'balance' in table_name and 'sheet' in table_name:
-                    balance_sheet = table
-                elif any(term in table_name for term in ['sales', 'revenue', 'financial', 'income']):
+                # Find Financial table first
+                if 'financial' in table_name:
+                    financial_table = table
+                elif any(term in table_name for term in ['sales', 'revenue', 'balance', 'income']):
                     other_financial.append(table)
                 else:
                     remaining.append(table)
             
-            # Put BalanceSheet first, then other financial tables
-            if balance_sheet:
-                result.append(balance_sheet)
+            # Put Financial table first, then other financial tables
+            if financial_table:
+                result.append(financial_table)
             result.extend(other_financial[:2])  # Max 2 other financial tables
             result.extend(remaining[:2])       # Max 2 other tables
             
@@ -2373,101 +2628,71 @@ REMEMBER: If you include a column in SELECT without an aggregate function, it MU
         
         return relevant_tables or tables_info
     
-    async def add_smart_context_to_prompt(self, base_prompt: str, conversation_history: List[Dict], question: str) -> str:
-        if not conversation_history:
-            return base_prompt
-        last_context = next((item.get('context', {}) for item in reversed(conversation_history) if item.get('role') == 'assistant' and item.get('context')), {})
-        if not last_context:
-            return base_prompt
-        intent_analysis = await IntentAnalyzer.analyze(question, conversation_history, last_context)
-        logger.info("Intent analysis", analysis=intent_analysis)
-        if intent_analysis['context_relevance'] == 'ignore':
-            return base_prompt + f"\n\nCONTEXT GUIDANCE: This appears to be a {intent_analysis['question_type']} question. {intent_analysis['reasoning']} Therefore, analyze the FULL dataset - do NOT filter by previous query results."
-        context_text = f"\n\nINTELLIGENT CONTEXT ANALYSIS: {intent_analysis['reasoning']}"
-        for key, values in last_context.items():
-            if key.endswith('_list') and values:
-                column_base = key.replace('_list', '')
-                column_name = column_base.upper() if column_base.endswith('id') else column_base
-                total_count = len(values)
-                sample_values = values[:5]
-                value_list = "', '".join(str(v) for v in values)
-                context_text += f"\n\nPREVIOUS QUERY RESULTS: Found {total_count} {column_base} values (sample: {sample_values})"
-                context_text += f"\nFor this {intent_analysis['question_type']} question about {intent_analysis['focus_entities']}, filter using: WHERE [{column_name}] IN ('{value_list}')"
-        context_text += f"\n\nThis is a {intent_analysis['question_type'].upper()} question - use the context above to filter your query appropriately."
-        return base_prompt + context_text
     
+    
+        
     async def build_chatgpt_system_prompt(self, question: str, tables_info: List[Dict], conversation_history: List[Dict] = None) -> str:
+        """✅ UPDATE - Simplified without complex context logic"""
+        
         base_prompt = self.load_base_prompt()
         schema_section = self.format_schema_for_prompt(self.filter_schema_for_question(question, tables_info))
-        context_section = await self.add_smart_context_to_prompt("", conversation_history, question)
         
-        # Enhanced question analysis with GROUP BY guidance
+        # ✅ SIMPLIFIED: Basic question analysis without complex context
         question_analysis = f"""
-QUESTION ANALYSIS:
-User Question: "{question}"
+    🎯 CURRENT REQUEST ANALYSIS:
+    User Question: "{question}"
 
-Key Requirements:
-- Generate SQL using ONLY the tables and columns shown in the schema above
-- Focus on answering the specific question asked
-- Use appropriate JOINs to link related data
-- Apply filters and aggregations as needed
-- Ensure all column references are valid
-- **CRITICAL: Follow GROUP BY rules - every non-aggregate column in SELECT must be in GROUP BY**
+    INSTRUCTIONS:
+    1. **Schema Validation**: Use ONLY the tables and columns shown below in the schema
+    2. **Professional Output**: Format SQL with proper spacing and readable structure
+    3. **Business Focus**: Provide SQL that delivers actionable business insights
 
-TREND ANALYSIS GUIDANCE:
-If this is about trends (upward/downward):
-1. Look for columns like [Revenue Trend], [Trend], [Direction] in the schema
-2. Filter using WHERE [Trend Column] = 'Downward' or 'Upward'
-3. Group by client/entity to summarize trend data
-4. Use aggregate functions (COUNT, SUM, AVG) for metrics
-5. Include time filtering for recent data
-
-"""
-        return f"{base_prompt}\n\n{schema_section}\n\n{question_analysis}{context_section}\""
-
-# Intent analyzer
-class IntentAnalyzer:
-    @staticmethod
-    async def analyze(question: str, conversation_history: List[Dict], context: Dict) -> Dict[str, Any]:
-        recent_context = ""
-        if conversation_history:
-            last_user_msg = next((msg.get('content', '') for msg in reversed(conversation_history) if msg.get('role') == 'user'), '')
-            last_assistant_msg = next((msg.get('content', '') for msg in reversed(conversation_history) if msg.get('role') == 'assistant'), '')
-            if last_user_msg:
-                recent_context = f"Previous question: {last_user_msg}\n"
-            if context:
-                context_summary = {key: f"{len(values)} items (sample: {values[:3]})" for key, values in context.items() if key.endswith('_list')}
-                recent_context += f"Previous query results: {context_summary}\n"
+    🆕 NEW QUERY PROCESSING: Comprehensive analysis of the dataset.
+    """
         
-        intent_prompt = f"""You are an expert data analyst. Analyze the user's question and determine how to handle it.
+        return f"{base_prompt}\n\n{schema_section}\n\n{question_analysis}"
 
-CONVERSATION CONTEXT:
-{recent_context}
-
-CURRENT QUESTION: "{question}"
-
-Analyze this question and respond with a JSON object containing:
-1. "question_type": "follow_up", "new_analysis", or "clarification"
-2. "reasoning": Brief explanation
-3. "context_relevance": "use_all", "use_partial", or "ignore"
-4. "focus_entities": Primary focus (employees, devices, incidents, etc.)
-
-Respond with valid JSON only."""
+    
+    def extract_filters_from_sql(self, sql: str) -> List[str]:
+        """Extract WHERE conditions from previous SQL to preserve context"""
+        
+        if not sql:
+            return []
+        
         try:
-            response = await ai_services.ask_intelligent_llm_async(intent_prompt)
-            response_clean = response.strip().lstrip('```json').rstrip('```').strip()
-            intent_analysis = json.loads(response_clean)
-            required_fields = ['question_type', 'reasoning', 'context_relevance', 'focus_entities']
-            if all(field in intent_analysis for field in required_fields):
-                return intent_analysis
-            logger.warning("Intent analysis missing required fields", response=intent_analysis)
-            return {"question_type": "new_analysis", "context_relevance": "ignore", "reasoning": "Fallback due to parsing error", "focus_entities": "unknown"}
+            sql_upper = sql.upper()
+            
+            # Find WHERE clause
+            where_start = sql_upper.find(' WHERE ')
+            if where_start == -1:
+                return []
+            
+            # Find end of WHERE clause (before GROUP BY, ORDER BY, etc.)
+            where_end = len(sql)
+            for keyword in [' GROUP BY', ' ORDER BY', ' HAVING']:
+                pos = sql_upper.find(keyword, where_start)
+                if pos != -1:
+                    where_end = min(where_end, pos)
+            
+            where_clause = sql[where_start + 7:where_end].strip()
+            
+            # Split by AND/OR and clean up
+            conditions = []
+            for condition in where_clause.split(' AND '):
+                condition = condition.strip()
+                if condition and not condition.upper().startswith('OR'):
+                    # Clean up the condition
+                    if condition.startswith('(') and condition.endswith(')'):
+                        condition = condition[1:-1]
+                    conditions.append(condition)
+            
+            logger.info("Extracted SQL filters", original_sql=sql, filters=conditions)
+            return conditions
+            
         except Exception as e:
-            logger.error("Intent analysis failed", error=str(e))
-            question_lower = question.lower()
-            if any(word in question_lower for word in ['their', 'those', 'these', 'same', 'above']):
-                return {"question_type": "follow_up", "context_relevance": "use_all", "reasoning": "Fallback: detected referential language", "focus_entities": "same_as_previous"}
-            return {"question_type": "new_analysis", "context_relevance": "ignore", "reasoning": "Fallback: appears to be new analysis", "focus_entities": "unknown"}
+            logger.warning("Failed to extract filters from SQL", error=str(e), sql=sql)
+            return []
+    
 
 # Initialize prompt manager
 prompt_manager = PromptManager(ai_services)
@@ -2511,7 +2736,12 @@ class ReportRequest(BaseModel):
 class AnalyticsEngine:
     """Main analytics engine - consolidated logic"""
     
-    def __init__(self, db_manager, schema_manager, kql_storage, ai_services, viz_manager, prompt_manager):
+    def __init__(self, db_manager: DatabaseManager, 
+                 schema_manager: SchemaManager, 
+                 kql_storage: KQLStorage,  # ✅ Explicit type hint
+                 ai_services: AIServiceManager, 
+                 viz_manager: VisualizationManager, 
+                 prompt_manager: PromptManager):
         self.db_manager = db_manager
         self.schema_manager = schema_manager
         self.kql_storage = kql_storage
@@ -2519,118 +2749,600 @@ class AnalyticsEngine:
         self.viz_manager = viz_manager
         self.prompt_manager = prompt_manager
     
-    async def cached_intelligent_analyze(self, question: str, session_id: str = None, enable_ai_insights: bool = False) -> Dict[str, Any]:
-        """Main entry point with caching support"""
+    def is_contextual_question(self, question: str) -> bool:
+        """Detect if a question refers to previous context - FIXED VERSION"""
+        question_lower = question.lower().strip()
         
+        # ✅ STRONG contextual indicators (high confidence)
+        strong_contextual = [
+            # Complete phrases that are definitely contextual
+            'why does it', 'why does this', 'why does that',
+            'how does it', 'how does this', 'how does that', 
+            'what does it', 'what does this', 'what does that',
+            'how do i improve this', 'how can i improve this', 'how to improve this',
+            'how do i increase this', 'how can i increase this', 'how to increase this',
+            'explain this', 'explain it', 'analyze this', 'analyze it',
+            'what causes this', 'what causes it', 'what makes this', 'what makes it',
+            'this behavior', 'this pattern', 'this trend', 'this way',
+            'why is this', 'why is it', 'how is this', 'how is it',
+            'what should we do about this', 'what should we do',
+            'what can we do about this', 'what can we do',
+            'how should we handle this', 'how should we handle',
+            'what action should we take', 'what actions should we take',
+            'how do we fix this', 'how can we fix this',
+            'what steps should we take', 'what do we need to do',
+            'how do we improve this', 'how can we improve this',
+            'what recommendations do you have', 'what do you recommend',
+            'what should be our next steps', 'what are the next steps'
+            ]
+        
+        # Check for strong indicators first (these are definitely contextual)
+        for indicator in strong_contextual:
+            if indicator in question_lower:
+                print(f"🔍 DEBUG: Strong contextual pattern detected: '{indicator}' in '{question}'")
+                return True
+        
+        # ✅ WEAK contextual indicators (only contextual in specific contexts)
+        weak_contextual = ['this', 'it', 'that', 'them', 'their']
+        
+        # Only consider weak indicators if:
+        # 1. Question is very short (<=4 words)
+        # 2. AND contains improvement/explanation words
+        # 3. AND doesn't contain data analysis words
+        if len(question_lower.split()) <= 4:
+            has_weak_pronoun = any(pronoun in question_lower for pronoun in weak_contextual)
+            has_improvement_words = any(word in question_lower for word in ['improve', 'increase', 'fix', 'change', 'why', 'how', 'explain'])
+            has_data_words = any(word in question_lower for word in ['show', 'get', 'find', 'list', 'display', 'revenue', 'profit', 'sales'])
+            
+            if has_weak_pronoun and has_improvement_words and not has_data_words:
+                print(f"🔍 DEBUG: Weak contextual pattern detected in short question: '{question}'")
+                return True
+        
+        # ✅ Questions starting with contextual words
+        contextual_starters = [
+            'why does', 'how does', 'what does', 'explain why', 'explain how',
+            'why is this', 'how is this', 'what is this'
+        ]
+        
+        for starter in contextual_starters:
+            if question_lower.startswith(starter):
+                print(f"🔍 DEBUG: Contextual starter detected: '{starter}' in '{question}'")
+                return True
+        
+        print(f"🔍 DEBUG: Question NOT detected as contextual: '{question}'")
+        return False     
+      
+    
+    async def cached_intelligent_analyze(self, question: str, session_id: str = None, enable_ai_insights: bool = False) -> Dict[str, Any]:
+        """Main entry point with caching support - FIXED CONTEXT VERSION"""
+    
         actual_session_id = session_id if session_id else "default-session-1234567890"
         
+        print(f"🔍 ENTRY: Question='{question}', Session={actual_session_id}")
+         
         # Skip KQL cache lookup for schema queries
         if question.lower() in ['tables_info', 'schema_info']:
-            return await self.intelligent_analyze(question, actual_session_id, enable_ai_insights)
+            print(f"🔍 FLOW: Schema query - skipping storage")
+            return await self.intelligent_analyze_with_context(question, actual_session_id, enable_ai_insights, None)
         
+        is_contextual = self.is_contextual_question(question)
+        is_data = self.is_data_question(question) 
+        
+        print(f"🔍 FLOW: is_contextual = {is_contextual}")
+    
+    # For contextual questions, always process fresh (don't use cache)
+        if is_contextual:
+            print(f"🔍 FLOW: Processing contextual question - NO STORAGE")
+            logger.info("Contextual question detected, processing fresh", 
+                    question=question, session_id=actual_session_id)
+            
+            conversation_history = await self.get_simple_conversation_history(actual_session_id)
+            logger.info("Retrieved conversation history for contextual question",
+                    session_id=actual_session_id,
+                    history_items=len(conversation_history))
+            
+            #Check if we have previous data context for this contextual question
+            if conversation_history and len(conversation_history) > 0:
+                # Check if the last conversation was a data query with results
+                last_assistant_msg = None
+                for msg in reversed(conversation_history):
+                    if msg.get('role') == 'assistant':
+                        last_assistant_msg = msg
+                        break
+                
+                has_previous_data = False
+                if last_assistant_msg and 'SQL Query:' in last_assistant_msg.get('content', ''):
+                    has_previous_data = True
+                    print(f"🔍 CONTEXT: Found previous data query in conversation history")
+                
+                # 🆕 If contextual + we have previous data, force data analysis
+                if has_previous_data and not is_data:
+                    print(f"🔍 OVERRIDE: Contextual question with previous data - forcing data analysis")
+                    # Override the data detection for contextual questions with data context
+                    is_data = True
+        
+            
+            result = await self.intelligent_analyze_with_context(question, actual_session_id, enable_ai_insights, conversation_history)
+           
+            try:
+                print(f"🔍 DEBUG: Storing contextual question in KQL for session: {actual_session_id}")
+                await self.kql_storage.store_in_kql(question, result, [], actual_session_id)
+                print(f"✅ DEBUG: Contextual question stored successfully")
+            except Exception as e:
+                logger.error("KQL storage failed for contextual question", error=str(e), question=question, session_id=actual_session_id)
+            
+            return result    
+        
+        print(f"🔍 FLOW: Processing non-contextual question")          
         # Check KQL cache for user questions only (with session context)
         cached_result = await self.kql_storage.get_from_kql_cache(question, actual_session_id)
-        logger.info("Cache check", question=question, session_id=actual_session_id, cache_hit=bool(cached_result))
+        logger.info("Cache check", 
+                question=question, 
+                session_id=actual_session_id, 
+                cache_hit=bool(cached_result),
+                is_contextual=is_contextual
+        )
+                
         
         if cached_result:
-            logger.info("Cache hit", question=question, session_id=actual_session_id)
-            cached_result["session_id"] = actual_session_id
+            logger.info("Cache hit for non-contextual question", question=question, session_id=actual_session_id)
+            cached_result["session_id"] = actual_session_id          
             return cached_result
         
-        # Process new question
-        result = await self.intelligent_analyze(question, actual_session_id, enable_ai_insights)
+        # Process new question WITH CONTEXT
+        result = await self.intelligent_analyze_with_context(question, actual_session_id, enable_ai_insights, None)
         
-        # Store in KQL with session ID
-        await self.kql_storage.store_in_kql(question, result, result.get("conversation_history", []), actual_session_id)
-        logger.info("Processed and stored result", question=question, session_id=actual_session_id)
+        try:
+            print(f"🔍 DEBUG: About to store in KQL for session: {actual_session_id}")
+            await self.kql_storage.store_in_kql(question, result, [], actual_session_id)
+            print(f"✅ DEBUG: KQL storage completed for session: {actual_session_id}")
+            
+            # ✅ Add small delay to ensure KQL consistency
+            await asyncio.sleep(0.1)
+            
+            logger.info("Processed and stored result", question=question, session_id=actual_session_id)
+        except Exception as e:
+            logger.error("KQL storage failed", error=str(e), question=question, session_id=actual_session_id)
+            # Don't fail the entire request if storage fails
         
         return result
     
-    async def intelligent_analyze(self, question: str, session_id: str = None, enable_ai_insights: bool = False) -> Dict[str, Any]:
-        """Enhanced intelligent analysis with AI agent integration - CONSOLIDATED"""
+    
+    def is_data_question(self, question: str) -> bool:
+        """Detect if this is a data analysis question that should generate SQL"""
+        
+        question_lower = question.lower().strip()
+        
+        # Data analysis keywords
+        data_keywords = [
+            'show', 'get', 'find', 'list', 'display', 'what is', 'what are',
+            'how much', 'how many', 'count', 'sum', 'total', 'average', 'avg',
+            'max', 'min', 'calculate', 'analysis', 'analyze', 'report',
+            'revenue', 'profit', 'margin', 'sales', 'cost', 'expense',
+            'gross', 'net', 'income', 'client', 'customer', 'year', 'quarter',
+            'month', 'trend', 'growth', 'performance', 'breakdown'
+        ]
+        
+        # Time indicators
+        time_keywords = [
+            '2020', '2021', '2022', '2023', '2024', '2025',
+            'quarter', 'q1', 'q2', 'q3', 'q4', 'monthly', 'yearly'
+        ]
+        
+        # Metric keywords
+        metric_keywords = [
+            'margin', 'profit', 'revenue', 'income', 'cost', 'expense',
+            'ratio', 'percentage', 'rate', 'amount', 'value'
+        ]
+        
+        has_data_keywords = any(keyword in question_lower for keyword in data_keywords)
+        has_time_keywords = any(keyword in question_lower for keyword in time_keywords)
+        has_metric_keywords = any(keyword in question_lower for keyword in metric_keywords)
+        
+        # It's a data question if it has data keywords OR metric keywords OR time keywords
+        return has_data_keywords or has_metric_keywords or has_time_keywords
+               
+    async def force_sql_generation_simple(self, question: str, tables_info: List[Dict], 
+                                     conversation_history: List[Dict], session_id: str, 
+                                     enable_ai_insights: bool) -> Dict[str, Any]:
+        """Simple fallback SQL generation when LLM doesn't generate SQL"""
+        print(f"🔍 DEBUG: force_sql_generation_simple called")
+        print(f"🔍 DEBUG: Question: {question}")
+        print(f"🔍 DEBUG: Conversation history items: {len(conversation_history)}")
+        
+        context_section = ""
+        if conversation_history and len(conversation_history) > 0:
+            context_section = "\n\nCONVERSATION CONTEXT:\n"
+            for msg in conversation_history[-4:]:  # Last 2 Q&A pairs
+                role = "User" if msg["role"] == "user" else "Assistant"
+                context_section += f"{role}: {msg['content']}\n\n"
+            
+            context_section += "CONTEXT INSTRUCTIONS:\n"
+            context_section += "- This question may refer to previous results\n"
+            context_section += "- If the question uses words like 'this', 'it', 'them', preserve filters from previous queries\n"
+            context_section += "- For contextual questions, enhance the previous SQL with additional analysis\n\n"
+        
+        simple_prompt = f"""
+    GENERATE SQL FOR DATA QUESTION:
+
+    Question: "{question}"
+
+    Available tables: {[t['table'] for t in tables_info[:3]]}
+
+    Schema sample: {json.dumps(tables_info[0] if tables_info else {}, indent=2, default=Utils.safe_json_serialize)}
+
+    {context_section}
+
+CRITICAL REQUIREMENTS:
+1. Use ONLY tables from the provided schema
+2. MUST respond with SQL_QUERY: and ANALYSIS: format
+3. Start SQL with SELECT
+4. If this question refers to previous context, preserve relevant filters
+5. For improvement questions, add analytical elements (LAG, LEAD, growth calculations)
+
+    You MUST respond with this format:
+
+    SQL_QUERY:
+    [Your SQL query here - start with SELECT]
+
+    ANALYSIS:
+    [Brief explanation]
+
+    Generate SQL that answers: "{question}"
+    """
+        
+        try:
+            print(f"🔍 DEBUG: Sending fallback prompt to LLM")
+            fallback_response = await self.ai_services.ask_intelligent_llm_async(simple_prompt)
+            print(f"🔍 DEBUG: Fallback LLM response received: {len(fallback_response)} chars")
+            
+            if "SQL_QUERY:" in fallback_response:
+                parts = fallback_response.split("SQL_QUERY:", 1)[1].split("ANALYSIS:", 1)
+                fallback_sql = Utils.clean_generated_sql(parts[0].strip())
+                analysis = parts[1].strip() if len(parts) > 1 else "Fallback SQL generated"
+                
+                print(f"🔍 DEBUG: Extracted SQL: {fallback_sql[:100]}...")
+                
+                if fallback_sql and fallback_sql.upper().startswith("SELECT"):
+                    print(f"🔍 DEBUG: Executing fallback SQL")
+                    results = await self.execute_sql_query(fallback_sql)
+                    
+                    return {
+                        "question": question,
+                        "generated_sql": fallback_sql,
+                        "analysis": analysis,
+                        "result_count": len(results),
+                        "sample_data": results[:5] if results else [],
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": session_id,
+                        "ai_insights_enabled": enable_ai_insights,
+                        "fallback_used": True,
+                        "conversation_context_used": len(conversation_history) > 0
+                    }
+                else:
+                    print(f"🔍 DEBUG: Invalid SQL generated: {fallback_sql}")
+            else:
+                print(f"🔍 DEBUG: No SQL_QUERY marker found in response")
+        
+        except Exception as e:
+            logger.error("Fallback SQL generation failed", error=str(e))
+        
+        # Final fallback
+        return self.create_error_response("Could not generate SQL for your question.",
+                                    f"I'm having trouble creating a SQL query for: '{question}'",
+                                    "Try rephrasing with more specific terms like 'Show me gross margin by year from Financial table'",
+                                    session_id, [], enable_ai_insights)
+    
+    async def intelligent_analyze_with_context(self, question: str, session_id: str = None, 
+                                         enable_ai_insights: bool = False, 
+                                         conversation_history: List[Dict] = None) -> Dict[str, Any]:
+        """Simple approach using natural LLM context handling"""
+        
         start_total = time.time()
         actual_session_id = session_id if session_id else "default-session-1234567890"
         
         try:
-            # Get conversation history
-            conversation_history = await self.get_conversation_history(actual_session_id)
-
+            logger.info("Starting context analysis", 
+                    question=question, 
+                    session_id=actual_session_id,
+                    has_provided_history=bool(conversation_history))
+            
             # Handle casual greetings
             if self.is_casual_greeting(question):
-                return await self.handle_casual_greeting(question, session_id, conversation_history, enable_ai_insights)
-
+                return await self.handle_casual_greeting(question, actual_session_id, conversation_history or [], enable_ai_insights)
+            
+            # ✅ Use provided conversation history or get fresh if None
+            if conversation_history is None:
+                conversation_history = await self.get_simple_conversation_history(actual_session_id)
+                logger.info("Retrieved fresh conversation history", 
+                        session_id=actual_session_id,
+                        history_items=len(conversation_history))
+            else:
+                logger.info("Using provided conversation history", 
+                        session_id=actual_session_id,
+                        history_items=len(conversation_history))
+            
             # Get tables info
             tables_info = await self.schema_manager.get_cached_tables_info()
             if not tables_info:
                 return self.create_error_response("No accessible tables found.", 
                                                 "The system couldn't find any tables in your database.",
-                                                "Check database connection and permissions. Try asking about specific data tables.",
-                                                session_id, conversation_history, enable_ai_insights)
-
-            # Generate SQL and analysis
-            potential_sql, analysis = await self.generate_sql_and_analysis(question, tables_info, conversation_history)
+                                                "Check database connection and permissions.",
+                                                actual_session_id, conversation_history or [], enable_ai_insights)
+                    
+            is_data_question = self.is_data_question(question)
+            is_contextual = self.is_contextual_question(question)
             
-            if not potential_sql or not potential_sql.upper().startswith("SELECT"):
-                return await self.handle_no_sql_generated(question, tables_info, conversation_history, session_id, enable_ai_insights)
-
-            # Execute SQL query
-            results = await self.execute_sql_query(potential_sql)
-            query_context = Utils.extract_context_from_results(results)
+            print(f"🔍 ANALYSIS: is_data={is_data_question}, is_contextual={is_contextual}")
             
-            # Build response
-            response = {
-                "question": question,
-                "generated_sql": potential_sql,
-                "analysis": analysis,
-                "result_count": len(results),
-                "sample_data": results[:5] if results else [],
-                "timestamp": datetime.now().isoformat(),
-                "session_id": session_id,
-                "conversation_history": self.update_conversation_history(conversation_history, question, potential_sql, results, query_context),
-                "ai_insights_enabled": enable_ai_insights
-            }
-
-            # Add visualization
-            await self.viz_manager.add_visualization_to_response(question, potential_sql, results, response)
-
-            # Enhanced analysis
-            if results:
-                await self.add_enhanced_analysis(question, potential_sql, results, query_context, response, enable_ai_insights)
-            else:
-                await self.handle_no_results(question, potential_sql, response)
-
-            logger.info("Total processing time", duration=time.time() - start_total)
-            response["session_id"] = actual_session_id
-            return response
-
+            if is_contextual and conversation_history:
+    # If contextual and we have conversation history, check for previous data
+                for msg in conversation_history:
+                    if msg.get('role') == 'assistant' and 'SQL Query:' in msg.get('content', ''):
+                        print(f"🔍 CONTEXTUAL DATA: Found previous SQL in history - forcing data analysis")
+                        is_data_question = True
+                        break
+        
+        
+            if not is_data_question:
+                # Handle as conversational
+                return await self.handle_conversational_question(question, actual_session_id, conversation_history or [], enable_ai_insights)
+            
+            # ✅ Build prompt with conversation context
+            enhanced_prompt = await self.build_prompt_with_conversation(question, tables_info, conversation_history)
+            
+            logger.info("Sending enhanced prompt to LLM", 
+                prompt_length=len(enhanced_prompt),
+                has_conversation_history=len(conversation_history) > 0,
+                question=question)
+                    
+            try:
+                llm_response = await self.ai_services.ask_intelligent_llm_async(enhanced_prompt)
+                
+                logger.info("LLM response received", 
+                        response_length=len(llm_response),
+                        has_sql_query_marker="SQL_QUERY:" in llm_response,
+                        has_analysis_marker="ANALYSIS:" in llm_response,
+                        response_preview=llm_response[:200])
+                
+                # ✅ ENHANCED: Multiple ways to extract SQL
+                generated_sql = ""
+                analysis = ""
+                
+                # Method 1: Standard format
+                if "SQL_QUERY:" in llm_response and "ANALYSIS:" in llm_response:
+                    parts = llm_response.split("SQL_QUERY:", 1)[1].split("ANALYSIS:", 1)
+                    generated_sql = Utils.clean_generated_sql(parts[0].strip())
+                    analysis = parts[1].strip()
+                    logger.info("SQL extracted using standard format")
+                
+                # Method 2: Look for SQL_QUERY: without ANALYSIS:
+                elif "SQL_QUERY:" in llm_response:
+                    parts = llm_response.split("SQL_QUERY:", 1)
+                    generated_sql = Utils.clean_generated_sql(parts[1].strip())
+                    analysis = "SQL query generated"
+                    logger.info("SQL extracted using SQL_QUERY marker only")
+                
+                # Method 3: Look for SELECT statements
+                elif "SELECT" in llm_response.upper():
+                    lines = llm_response.split('\n')
+                    sql_lines = []
+                    in_sql_block = False
+                    
+                    for line in lines:
+                        line_upper = line.strip().upper()
+                        if line_upper.startswith('SELECT'):
+                            in_sql_block = True
+                            sql_lines = [line]
+                        elif in_sql_block:
+                            if line.strip() and not line.strip().startswith('--') and not line.strip().startswith('/*'):
+                                # Check if this looks like SQL
+                                if any(keyword in line_upper for keyword in ['FROM', 'WHERE', 'GROUP BY', 'ORDER BY', 'JOIN', 'AND', 'OR']):
+                                    sql_lines.append(line)
+                                elif line.strip().endswith(';'):
+                                    sql_lines.append(line)
+                                    break
+                                elif not line.strip():
+                                    break
+                            elif not line.strip():
+                                break
+                    
+                    if sql_lines:
+                        generated_sql = Utils.clean_generated_sql(' '.join(sql_lines))
+                        # Find analysis after SQL
+                        sql_end_idx = llm_response.find(sql_lines[-1]) + len(sql_lines[-1])
+                        remaining_text = llm_response[sql_end_idx:].strip()
+                        analysis = remaining_text[:500] if remaining_text else "SQL extracted from response"
+                        logger.info("SQL extracted by finding SELECT statements")
+                
+                # ✅ FALLBACK: If still no SQL for a data question, force generate
+                if not generated_sql and is_data_question:
+                    logger.warning("No SQL found in LLM response for data question, forcing generation")
+                    return await self.force_sql_generation_simple(question, tables_info, conversation_history, actual_session_id, enable_ai_insights)
+                
+                # Execute SQL if we have it
+                if generated_sql and generated_sql.upper().startswith("SELECT"):
+                    logger.info("Executing generated SQL", sql_length=len(generated_sql))
+                    
+                    try:
+                        results = await self.execute_sql_query(generated_sql)
+                        logger.info("SQL execution successful", result_count=len(results))
+                    except Exception as sql_error:
+                        logger.error("SQL execution failed", error=str(sql_error), sql=generated_sql)
+                        return self.create_error_response(f"SQL execution error: {str(sql_error)}", 
+                                                    "The generated SQL query failed to execute.",
+                                                    "There may be an issue with the query syntax or database schema.",
+                                                    actual_session_id, [], enable_ai_insights)
+                    
+                    # Build response
+                    response = {
+                        "question": question,
+                        "generated_sql": generated_sql,
+                        "analysis": analysis,
+                        "result_count": len(results),
+                        "sample_data": results[:5] if results else [],
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": actual_session_id,
+                        "ai_insights_enabled": enable_ai_insights,
+                        "conversation_context_used": len(conversation_history) > 0
+                    }
+                    
+                    # Add visualization if appropriate
+                    await self.viz_manager.add_visualization_to_response(question, generated_sql, results, response)
+                    
+                    # Enhanced analysis
+                    if results and enable_ai_insights:
+                        await self.add_enhanced_analysis(question, generated_sql, results, {}, response, enable_ai_insights)
+                    
+                    logger.info("Simple analysis completed", 
+                            duration=time.time() - start_total,
+                            has_context=len(conversation_history) > 0,
+                            result_count=len(results))
+                    
+                    return response
+                else:
+                    # No valid SQL generated for data question
+                    logger.warning("No valid SQL generated for data question")
+                    return {
+                        "question": question,
+                        "response_type": "error",
+                        "analysis": f"I couldn't generate SQL for your question: '{question}'. This appears to be a data question but I wasn't able to create a valid query.",
+                        "suggestion": "Try rephrasing your question more specifically, such as 'Show me gross margin by year' or 'Calculate gross margin for 2024 and 2025'",
+                        "timestamp": datetime.now().isoformat(),
+                        "session_id": actual_session_id,
+                        "ai_insights_enabled": enable_ai_insights,
+                        "debug_info": {
+                            "llm_response_preview": llm_response[:300],
+                            "has_sql_marker": "SQL_QUERY:" in llm_response,
+                            "has_select": "SELECT" in llm_response.upper()
+                        }
+                    }
+            
+            except Exception as e:
+                logger.error("LLM processing failed", error=str(e))
+                return self.create_error_response(f"LLM error: {str(e)}", 
+                                            "Failed to process your question with the AI model.",
+                                            "Try rephrasing your question more clearly.",
+                                            actual_session_id, [], enable_ai_insights)
+                
         except Exception as e:
-            logger.error("Analysis failed", error=str(e))
-            return self.create_error_response(f"Analysis_error: {str(e)}",
-                                           "I encountered an error while analyzing your question.",
-                                           "Try rephrasing your question, e.g., 'What are the recent incident trends for devices?'",
-                                           actual_session_id, [], enable_ai_insights)
+            logger.error("Simple analysis failed", error=str(e))
+            return self.create_error_response(f"Analysis error: {str(e)}",
+                                        "I encountered an error while analyzing your question.",
+                                        "Try rephrasing your question with more specific details.",
+                                        actual_session_id, [], enable_ai_insights)
     
-    async def get_conversation_history(self, session_id: str) -> List[Dict]:
-        """Get conversation history from KQL"""
-        history_query = f"""
-        ChatHistory_CFO
-        | where SessionID == '{session_id}'
-        | order by Timestamp desc
-        | take 10
-        | project Context
-        """
-        conversation_history = []
-        try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: self.db_manager.kusto_client.execute(self.db_manager.kusto_database, history_query)
-            )
-            for row in result.primary_results[0]:
-                context = json.loads(row["Context"])
-                conversation_history.extend(context)
-        except Exception as e:
-            logger.error("Failed to fetch conversation history", error=str(e))
-        return conversation_history
-    
+    async def get_simple_conversation_history(self, session_id: str, limit: int = 3) -> List[Dict]:
+        """Get conversation history - FIXED KustoResultRow access"""
+        
+        print(f"🔍 DEBUG: Getting history for session: '{session_id}'")
+        
+        # Clean session ID (same as your storage method)
+        clean_session_id = str(session_id).strip()
+        if clean_session_id.startswith('"') and clean_session_id.endswith('"'):
+            clean_session_id = clean_session_id[1:-1]
+        if clean_session_id.startswith("'") and clean_session_id.endswith("'"):
+            clean_session_id = clean_session_id[1:-1]
+        clean_session_id = clean_session_id.replace('"', '').replace("'", "")
+        
+        print(f"🔍 DEBUG: Cleaned session ID: '{clean_session_id}'")
+        
+        for attempt in range(3):
+            conversation = []
+            try:
+                print(f"🔍 DEBUG: History retrieval attempt {attempt + 1}")
+                
+                # ✅ Use 'has' operator and try to decode base64
+                history_query = f"""
+                ChatHistory_CFO
+                | where SessionID has "{clean_session_id}"
+                | where Question != 'tables_info' and Question != 'schema_info'
+                | where Question != ''
+                | order by Timestamp desc
+                | take {limit * 2}
+                | order by Timestamp asc
+                | extend 
+                    Decoded_Response = case(
+                        Response startswith "eyJ" or Response startswith "ew", base64_decode_tostring(Response),  // Looks like base64
+                        Response  // Use as-is for old data
+                    )
+                | project Question, Decoded_Response, Timestamp
+                """
+                
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: self.db_manager.kusto_client.execute(self.db_manager.kusto_database, history_query)
+                )
+                
+                raw_results = result.primary_results[0] if result.primary_results else []
+                print(f"🔍 DEBUG: KQL returned {len(raw_results)} raw results on attempt {attempt + 1}")
+                
+                if len(raw_results) > 0:
+                    # Process the results
+                    for i, row in enumerate(raw_results):
+                        try:
+                            print(f"🔍 DEBUG: Processing row {i+1}: {row['Question'][:50]}...")
+                            
+                            # ✅ FIXED: Access KustoResultRow by column name directly
+                            question = row["Question"]
+                            decoded_response = row["Decoded_Response"]
+                            
+                            if not decoded_response:
+                                print(f"❌ DEBUG: No response data for row {i+1}")
+                                continue
+                            
+                            try:
+                                response_data = json.loads(decoded_response)
+                                print(f"✅ DEBUG: JSON parsing successful for row {i+1}")
+                            except json.JSONDecodeError as e:
+                                print(f"❌ DEBUG: JSON decode error for row {i+1}: {e}")
+                                print(f"❌ DEBUG: Raw response preview: {decoded_response[:100]}...")
+                                continue
+                            
+                            # Add user message
+                            conversation.append({
+                                "role": "user",
+                                "content": question
+                            })
+                            
+                            # Add assistant message with key info
+                            generated_sql = response_data.get('generated_sql', '')
+                            result_count = response_data.get('result_count', 0)
+                            analysis = response_data.get('analysis', '')
+                            
+                            assistant_content = f"I analyzed your question and found {result_count} records.\n\n"
+                            if generated_sql:
+                                assistant_content += f"SQL Query: {generated_sql}\n\n"
+                            assistant_content += f"Analysis: {analysis}"
+                            
+                            conversation.append({
+                                "role": "assistant", 
+                                "content": assistant_content
+                            })
+                            
+                            print(f"🔍 DEBUG: Added Q&A pair {i+1}")
+                            
+                        except KeyError as e:
+                            print(f"❌ DEBUG: Column access error for row {i+1}: {e}")
+                            continue
+                        except Exception as e:
+                            print(f"❌ DEBUG: Error processing row {i+1}: {e}")
+                            continue
+                            
+                    print(f"🔍 DEBUG: Final conversation length: {len(conversation)}")
+                    return conversation  # Return immediately if we got results
+                    
+                elif attempt < 2:  # Don't wait after the last attempt
+                    print(f"🔍 DEBUG: No results on attempt {attempt + 1}, waiting 3 seconds...")
+                    await asyncio.sleep(3)
+                    
+            except Exception as e:
+                print(f"❌ DEBUG: Failed to get conversation history on attempt {attempt + 1}: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(3)
+        
+        print(f"🔍 DEBUG: All attempts failed, returning empty conversation")
+        return conversation
+   
     def is_casual_greeting(self, question: str) -> bool:
         """Check if question is a casual greeting"""
         vague_questions = ["hi", "hello", "hey", "greetings"]
@@ -2673,15 +3385,21 @@ This is a casual greeting. Provide a friendly response that:
             "ai_insights": None
         }
     
-    async def generate_sql_and_analysis(self, question: str, tables_info: List[Dict], conversation_history: List[Dict]) -> tuple:
-        """Generate SQL query and analysis"""
+    async def generate_sql_and_analysis(self, question: str, tables_info: List[Dict], conversation_history: List[Dict] = None) -> tuple:
+        """✅ KEEP - Simplified version"""
+        
+        print(f"🔍 DEBUG: generate_sql_and_analysis called")
+        print(f"🔍 DEBUG: Has conversation history: {bool(conversation_history and len(conversation_history) > 0)}")
+        
         potential_sql = self.get_predefined_query(question)
         analysis = "Using predefined query for common question type"
         
         if not potential_sql:
             start_llm = time.time()
-            base_prompt = await self.prompt_manager.build_chatgpt_system_prompt(question, tables_info, conversation_history)
-            logger.info("Sending prompt to LLM", prompt_length=len(base_prompt))
+            # ✅ SIMPLIFIED: Use basic prompt without complex context
+            base_prompt = await self.prompt_manager.build_chatgpt_system_prompt(question, tables_info, conversation_history or [])  # Empty conversation history
+            logger.info("Sending prompt to LLM", prompt_length=len(base_prompt),
+                        has_conversation_context=bool(conversation_history and len(conversation_history) > 0))
             llm_response = await self.ai_services.ask_intelligent_llm_async(base_prompt)
             logger.info("LLM call", duration=time.time() - start_llm)
             
@@ -2694,7 +3412,7 @@ This is a casual greeting. Provide a friendly response that:
                 potential_sql = Utils.clean_generated_sql(parts[0]) if len(parts) >= 1 else ""
                 analysis = parts[1] if len(parts) > 1 else llm_response
 
-        # Enhanced temporal query handling
+        # Keep temporal query handling
         if potential_sql and any(keyword in question.lower() for keyword in ['trend', 'predict', 'likely', 'next month', 'based on past', 'future']):
             potential_sql, analysis = await self.improve_temporal_query(question, potential_sql, analysis, tables_info)
         
@@ -2768,36 +3486,103 @@ ANALYSIS:
         return potential_sql, analysis
     
     async def handle_no_sql_generated(self, question: str, tables_info: List[Dict], conversation_history: List[Dict], session_id: str, enable_ai_insights: bool) -> Dict[str, Any]:
-        """Handle cases where no valid SQL was generated"""
-        if any(keyword in question.lower() for keyword in ["show", "which", "what", "find", "analyze", "their", "those"]):
-            # Try to force SQL generation
-            return await self.force_sql_generation(question, tables_info, conversation_history, session_id, enable_ai_insights)
-        else:
-            # Handle as conversational
-            return await self.handle_conversational_question(question, session_id, [], enable_ai_insights)
+        """Handle cases where no valid SQL was generated - FIXED SIGNATURE"""
+        
+        logger.warning("No SQL generated, attempting fallback", question=question)
+        
+        # Try a more direct approach
+        if any(keyword in question.lower() for keyword in ["show", "revenue", "brown", "client", "2024", "2025"]):
+            
+            # Force SQL generation with explicit instructions
+            force_sql_prompt = f"""
+    You are a SQL expert. Generate SQL for this question: "{question}"
+
+    CRITICAL REQUIREMENTS:
+    1. Use ONLY tables from the provided schema
+    2. MUST respond with SQL_QUERY: and ANALYSIS: format
+    3. For revenue questions, use Revenue column
+    4. For client questions, use Client column  
+    5. For year questions, use DATEPART(YEAR, [Date])
+
+    Available tables:
+    {json.dumps([t['table'] for t in tables_info[:3]], indent=2)}
+
+    Schema details:
+    {json.dumps(tables_info[:2], indent=2, default=Utils.safe_json_serialize)}
+
+    EXAMPLE for Brown Ltd revenue:
+    SQL_QUERY:
+    SELECT [Client], DATEPART(YEAR, [Date]) AS [Year], SUM([Revenue]) AS [Total_Revenue]
+    FROM [dbo].[Financial] 
+    WHERE [Client] = 'Brown Ltd' 
+    AND DATEPART(YEAR, [Date]) IN (2024, 2025)
+    GROUP BY [Client], DATEPART(YEAR, [Date])
+    ORDER BY [Year]
+
+    ANALYSIS:
+    Shows revenue totals for Brown Ltd across 2024 and 2025.
+
+    Now generate SQL for: "{question}"
+    """
+            
+            try:
+                forced_response = await self.ai_services.ask_intelligent_llm_async(force_sql_prompt)
+                
+                if "SQL_QUERY:" in forced_response:
+                    forced_parts = forced_response.split("SQL_QUERY:", 1)[1].split("ANALYSIS:", 1)
+                    forced_sql = Utils.clean_generated_sql(forced_parts[0].strip())
+                    
+                    if forced_sql and forced_sql.upper().startswith("SELECT") and "FROM" in forced_sql.upper():
+                        logger.info("Fallback SQL generation successful", sql_length=len(forced_sql))
+                        
+                        try:
+                            # Execute the fallback SQL
+                            results = await self.execute_sql_query(forced_sql)
+                            analysis = forced_parts[1].strip() if len(forced_parts) > 1 else "Fallback analysis provided"
+                            
+                            return {
+                                "question": question,
+                                "generated_sql": forced_sql,
+                                "analysis": analysis,
+                                "result_count": len(results),
+                                "sample_data": results[:5] if results else [],
+                                "timestamp": datetime.now().isoformat(),
+                                "session_id": session_id,
+                                "ai_insights_enabled": enable_ai_insights,
+                                "fallback_used": True
+                            }
+                        except Exception as e:
+                            logger.error("Fallback SQL execution failed", error=str(e))
+                
+            except Exception as e:
+                logger.error("Fallback SQL generation failed", error=str(e))
+        
+        # Final fallback - conversational response
+        return await self.handle_conversational_question(question, session_id, conversation_history, enable_ai_insights)
+
     
     async def force_sql_generation(self, question: str, tables_info: List[Dict], conversation_history: List[Dict], session_id: str, enable_ai_insights: bool) -> Dict[str, Any]:
-        """Force SQL generation for data questions"""
+        """Force SQL generation for data questions - FIXED SIGNATURE"""
         start_fallback = time.time()
         force_sql_prompt = f"""This is a data analysis question requiring SQL.
 
-Question: {question}
+    Question: {question}
 
-Use ONLY these tables:
-{chr(10).join(['- ' + table_info['table'] for table_info in tables_info])}
+    Use ONLY these tables:
+    {chr(10).join(['- ' + table_info['table'] for table_info in tables_info])}
 
-Available schema:
-{json.dumps(tables_info[:3], indent=2, default=Utils.safe_json_serialize)}
+    Available schema:
+    {json.dumps(tables_info[:3], indent=2, default=Utils.safe_json_serialize)}
 
-Generate a comprehensive SQL query with JOINs.
+    Generate a comprehensive SQL query with JOINs.
 
-Format:
-SQL_QUERY:
-[Complete SQL]
+    Format:
+    SQL_QUERY:
+    [Complete SQL]
 
-ANALYSIS:
-[Explanation]"""
-        force_sql_prompt = await self.prompt_manager.add_smart_context_to_prompt(force_sql_prompt, conversation_history, question)
+    ANALYSIS:
+    [Explanation]"""
+        
         try:
             forced_response = await self.ai_services.ask_intelligent_llm_async(force_sql_prompt)
             if "SQL_QUERY:" in forced_response:
@@ -2816,9 +3601,10 @@ ANALYSIS:
             logger.info("Fallback LLM call", duration=time.time() - start_fallback)
         except Exception as e:
             return self.create_error_response("Could not generate SQL for this question.",
-                                           "This appears to be a complex data question. There might be an issue with query complexity or data structure.",
-                                           f"Try asking about specific aspects using these tables: {', '.join([table_info['table'] for table_info in tables_info[:5]])}",
-                                           session_id, [], enable_ai_insights)
+                                        "This appears to be a complex data question. There might be an issue with query complexity or data structure.",
+                                        f"Try asking about specific aspects using these tables: {', '.join([table_info['table'] for table_info in tables_info[:5]])}",
+                                        session_id, conversation_history, enable_ai_insights)
+
     
     async def handle_conversational_question(self, question: str, session_id: str, conversation_history: List[Dict], enable_ai_insights: bool) -> Dict[str, Any]:
         """Handle conversational questions"""
@@ -2843,6 +3629,120 @@ This doesn't require database analysis. Provide a conversational response that:
             "ai_insights": None
         }
     
+    
+    
+    async def enhance_contextual_question(self, question: str, conversation_history: List[Dict]) -> str:
+        """Enhance vague contextual questions with previous context"""
+        
+        if not conversation_history:
+            return question
+            
+        # Get previous question and results info
+        last_user_question = ""
+        last_data_summary = ""
+        
+        for item in reversed(conversation_history):
+            if item.get('role') == 'user':
+                last_user_question = item.get('content', '')
+                break
+        
+        for item in reversed(conversation_history):
+            if item.get('role') == 'assistant' and item.get('result_count', 0) > 0:
+                result_count = item.get('result_count', 0)
+                last_data_summary = f"Found {result_count} records"
+                break
+        
+        # Create enhanced question
+        enhanced_question = f"""
+Based on the previous query: "{last_user_question}" which {last_data_summary}:
+
+User is now asking: "{question}"
+
+This is asking for analysis/explanation of the revenue data patterns. 
+Generate SQL to analyze trends, patterns, or explanations for the revenue behavior.
+Include year-over-year comparisons, growth rates, or trend analysis.
+"""
+        
+        logger.info("Enhanced contextual question", 
+                   original=question,
+                   enhanced=enhanced_question[:200])
+        
+        return enhanced_question
+    
+    
+    
+    async def handle_new_analysis(self, question: str, tables_info: List[Dict], conversation_history: List[Dict], session_id: str, enable_ai_insights: bool) -> Dict[str, Any]:
+        """Handle new analysis questions - FIXED SIGNATURE"""
+        
+        start_total = time.time()
+        
+        logger.info("Starting new analysis", 
+                question=question,
+                table_count=len(tables_info),
+                session_id=session_id,
+                has_conversation_history=bool(conversation_history))
+        
+        # Generate SQL and analysis (ignore conversation_history for now)
+        try:
+            potential_sql, analysis = await self.generate_sql_and_analysis(question, tables_info, [])
+            
+            logger.info("SQL generation result", 
+                    has_sql=bool(potential_sql),
+                    sql_length=len(potential_sql) if potential_sql else 0,
+                    sql_starts_with_select=potential_sql.upper().startswith("SELECT") if potential_sql else False)
+            
+        except Exception as e:
+            logger.error("SQL generation failed", error=str(e))
+            return self.create_error_response(f"SQL generation error: {str(e)}",
+                                        "Failed to generate SQL query for your question.",
+                                        "Try rephrasing your question more specifically.",
+                                        session_id, conversation_history, enable_ai_insights)
+        
+        if not potential_sql or not potential_sql.upper().startswith("SELECT"):
+            logger.warning("No valid SQL generated", 
+                        has_sql=bool(potential_sql),
+                        sql_content=potential_sql[:100] if potential_sql else "None")
+            return await self.handle_no_sql_generated(question, tables_info, conversation_history, session_id, enable_ai_insights)
+
+        # Execute SQL query
+        try:
+            results = await self.execute_sql_query(potential_sql)
+            logger.info("SQL execution result", result_count=len(results))
+        except Exception as e:
+            logger.error("SQL execution failed", error=str(e), sql=potential_sql)
+            return self.create_error_response(f"SQL execution error: {str(e)}",
+                                        "The generated SQL query failed to execute.",
+                                        "There may be an issue with the database schema or query syntax.",
+                                        session_id, conversation_history, enable_ai_insights)
+        
+        query_context = Utils.extract_context_from_results(results)
+        
+        # Build response
+        response = {
+            "question": question,
+            "generated_sql": potential_sql,
+            "analysis": analysis,
+            "result_count": len(results),
+            "sample_data": results[:5] if results else [],
+            "timestamp": datetime.now().isoformat(),
+            "session_id": session_id,
+            "ai_insights_enabled": enable_ai_insights
+        }
+
+        # Add visualization
+        await self.viz_manager.add_visualization_to_response(question, potential_sql, results, response)
+
+        # Enhanced analysis
+        if results:
+            await self.add_enhanced_analysis(question, potential_sql, results, query_context, response, enable_ai_insights)
+        else:
+            await self.handle_no_results(question, potential_sql, response)
+
+        logger.info("Total processing time", duration=time.time() - start_total)
+        return response
+    
+    
+    
     async def execute_sql_query(self, sql: str) -> List[Dict[str, Any]]:
         """Execute SQL query with proper error handling"""
         loop = asyncio.get_event_loop()
@@ -2851,23 +3751,11 @@ This doesn't require database analysis. Provide a conversational response that:
         logger.info("Query execution", duration=time.time() - start_query)
         return results
     
-    def update_conversation_history(self, conversation_history: List[Dict], question: str, sql: str, results: List[Dict], context: Dict) -> List[Dict]:
-        """Update conversation history"""
-        conversation_history.append({"role": "user", "content": question})
-        conversation_history.append({
-            "role": "assistant",
-            "content": f"Generated SQL and found {len(results)} results",
-            "sql": sql,
-            "context": context
-        })
-        if len(conversation_history) > 10:
-            conversation_history = conversation_history[-10:]
-        return conversation_history
-    
+        
     async def build_successful_response(self, question: str, sql: str, analysis: str, results: List[Dict], session_id: str, enable_ai_insights: bool) -> Dict[str, Any]:
-        """Build successful response with all data"""
+        """Build successful response with all data - FIXED"""
         query_context = Utils.extract_context_from_results(results)
-        conversation_history = []  # Would be populated from session
+        conversation_history = []  # Empty for now since we're using KQL-based context
         
         response = {
             "question": question,
@@ -2877,7 +3765,6 @@ This doesn't require database analysis. Provide a conversational response that:
             "sample_data": results[:5] if results else [],
             "timestamp": datetime.now().isoformat(),
             "session_id": session_id,
-            "conversation_history": self.update_conversation_history(conversation_history, question, sql, results, query_context),
             "ai_insights_enabled": enable_ai_insights
         }
 
@@ -2893,8 +3780,15 @@ This doesn't require database analysis. Provide a conversational response that:
         return response
     
     async def add_enhanced_analysis(self, question: str, sql: str, results: List[Dict], context: Dict, response: Dict, enable_ai_insights: bool):
-        """Add enhanced analysis to response"""
+        """Add enhanced analysis to response - FIXED VERSION"""
         start_enhanced = time.time()
+        
+        print(f"🔍 ENHANCED ANALYSIS DEBUG:")
+        print(f"  Question: '{question}'")
+        print(f"  Results count: {len(results)}")
+        print(f"  AI insights enabled: {enable_ai_insights}")
+        print(f"  AI Foundry available: {self.ai_services.ai_foundry_enabled}")
+        print(f"  Intelligent agent available: {self.ai_services.intelligent_agent is not None}")
         
         # Standard LLM analysis
         query_feedback = ""
@@ -2908,7 +3802,7 @@ Query Results: {len(results)} records
 Generated SQL: {sql}
 {query_feedback}
 
-Sample Data: {json.dumps(results[:10], indent=2, default=Utils.safe_json_serialize)}
+Sample Data: {json.dumps(results[:10], default=Utils.safe_json_serialize)}
 
 Provide a conversational response that:
 1. Summarizes results
@@ -2916,13 +3810,27 @@ Provide a conversational response that:
 3. Identifies key patterns
 4. Provides actionable recommendations
 5. Suggests next steps
+
+Use clear formatting with headers and bullet points. Include specific numbers and percentages from the data.
+
 """
         
-        standard_analysis = await self.ai_services.ask_intelligent_llm_async(enhanced_prompt)
+        try:
+            print(f"🔍 Generating standard analysis...")
+            standard_analysis = await self.ai_services.ask_intelligent_llm_async(enhanced_prompt)
+            print(f"✅ Standard analysis generated: {len(standard_analysis)} characters")
+            print(f"✅ Preview: {standard_analysis[:200]}...")
+        except Exception as e:
+            print(f"❌ Standard analysis failed: {e}")
+            standard_analysis = f"Analysis generation failed: {str(e)}"
         
-        # AI Agent enhanced analysis
-        if enable_ai_insights and self.ai_services.ai_foundry_enabled:
+        # ✅ FIX 3: Enhanced AI Agent analysis with proper None checks
+        if enable_ai_insights and self.ai_services.ai_foundry_enabled and self.ai_services.intelligent_agent is not None:
             try:
+                print(f"🤖 Attempting AI Foundry analysis...")
+                print(f"🤖 Data size being sent: {len(results)} records")
+                print(f"🤖 Question complexity: {len(question)} characters")
+                
                 start_ai_analysis = time.time()
                 ai_insights = await self.ai_services.intelligent_agent.analyze_with_ai(
                     results, question, context
@@ -2933,20 +3841,29 @@ Provide a conversational response that:
                     response["ai_insights"] = ai_insights
                     response["enhanced_analysis"] = f"{standard_analysis}\n\n**🤖 AI-Enhanced Insights:**\n{ai_insights}"
                     logger.info("AI insights added", duration=time.time() - start_ai_analysis)
+                    print(f"✅ Enhanced analysis field set successfully")
                 else:
                     response["ai_insights"] = "AI insights could not be generated; using standard analysis."
                     response["enhanced_analysis"] = standard_analysis
-                    logger.warning("AI insights generation failed")
+                    logger.warning("AI insights generation failed - no response from agent")
                     
             except Exception as e:
                 logger.error("AI insights generation error", error=str(e))
                 response["enhanced_analysis"] = standard_analysis
-                response["ai_insights"] = "AI Foundry insights unavailable; using standard analysis."
+                response["ai_insights"] = f"AI Foundry insights error: {str(e)}"
         else:
             response["enhanced_analysis"] = standard_analysis
-            response["ai_insights"] = "AI Foundry not enabled; using standard LLM analysis."
+            if not enable_ai_insights:
+                response["ai_insights"] = "AI insights disabled by user."
+            elif not self.ai_services.ai_foundry_enabled:
+                response["ai_insights"] = "AI Foundry not enabled; using standard LLM analysis."
+            elif self.ai_services.intelligent_agent is None:
+                response["ai_insights"] = "AI agent not available; using standard LLM analysis."
+            else:
+                response["ai_insights"] = "AI Foundry not available; using standard analysis."
         
         logger.info("Enhanced analysis", duration=time.time() - start_enhanced)
+
     
     async def handle_no_results(self, question: str, sql: str, response: Dict):
         """Handle case when query returns no results"""
@@ -2965,6 +3882,236 @@ Explain:
         response["ai_insights"] = None
         logger.warning("No-data query", duration=time.time() - start_no_data)
 
+    async def build_prompt_with_conversation(self, question: str, tables_info: List[Dict], conversation_history: List[Dict]) -> str:
+        """Build prompt with natural conversation context"""
+        
+        base_prompt = self.prompt_manager.load_base_prompt()
+        schema_section = self.prompt_manager.format_schema_for_prompt(tables_info)
+        
+        # Add conversation history if available
+        conversation_section = ""
+        if conversation_history:
+            conversation_section = "\n\n📝 CONVERSATION HISTORY:\n"
+            for msg in conversation_history[-6:]:  # Last 3 Q&A pairs
+                role = "User" if msg["role"] == "user" else "Assistant"
+                conversation_section += f"{role}: {msg['content']}\n\n"
+            
+            conversation_section += f"📋 CURRENT QUESTION: {question}\n"
+            
+            # 🆕 DIRECTLY USE EXISTING text_columns FROM tables_info
+            is_contextual = self.is_contextual_question(question)
+            question_lower = question.lower()
+            
+            # Check if question mentions any text columns from your schema
+            has_business_entities = False
+            matching_columns = []
+            
+            for table_info in tables_info:
+                text_columns = table_info.get('text_columns', [])  # 🎯 Reuse existing variable
+                for col in text_columns:
+                    col_term = col.lower().replace('_', ' ')
+                    if col_term in question_lower:
+                        has_business_entities = True
+                        matching_columns.append(col)
+            
+            print(f"🔍 CONTEXT CHECK: contextual={is_contextual}, has_entities={has_business_entities}")
+            if matching_columns:
+                print(f"🔍 MATCHING COLUMNS: {matching_columns}")
+            
+            if is_contextual or has_business_entities:
+                # 🆕 CREATE MAPPING FROM EXISTING text_columns
+                if matching_columns:
+                    column_mapping = "\n".join([f'- "{col.lower().replace("_", " ")}" → GROUP BY [{col}]' 
+                                            for col in matching_columns])
+                else:
+                    # Show available text columns from first table for reference
+                    first_table_text_cols = tables_info[0].get('text_columns', []) if tables_info else []
+                    column_mapping = "\n".join([f'- "{col.lower().replace("_", " ")}" → GROUP BY [{col}]' 
+                                            for col in first_table_text_cols[:8]])
+                
+                conversation_section += f"""
+    🔗 CONTEXTUAL DRILL-DOWN ANALYSIS INSTRUCTIONS:
+    - This is a FOLLOW-UP question referring to previous data analysis
+    - Generate SQL that builds upon the previous query results
+    - Use the same filters and WHERE conditions from the previous successful query
+    - Add the new GROUP BY dimension that the user is asking about
+
+    AVAILABLE TEXT COLUMNS FOR GROUPING:
+    {column_mapping}
+
+    ANALYSIS PATTERNS:
+    - For "why" questions: Include analytical elements (LAG, LEAD, growth calculations, comparisons)
+    - For "which" questions: Add appropriate GROUP BY and ORDER BY to show top contributors
+    - For drill-down: Preserve previous filters + add new grouping dimension
+
+    CRITICAL: Even if the question seems conversational, treat it as a data analysis request.
+    """
+            else:
+                conversation_section += """
+    🆕 NEW QUESTION: This appears to be a new question, analyze independently.
+    """
+        
+        # Enhanced response format for follow-ups
+        is_followup = conversation_history and len(conversation_history) > 0
+        is_contextual = self.is_contextual_question(question) if conversation_history else False
+        
+        # Quick check for any text column mentions
+        has_text_col_refs = False
+        if tables_info:
+            for table_info in tables_info:
+                text_columns = table_info.get('text_columns', [])  # 🎯 Reuse again
+                if any(col.lower().replace('_', ' ') in question.lower() for col in text_columns):
+                    has_text_col_refs = True
+                    break
+        
+        if is_followup and (is_contextual or has_text_col_refs):
+            # Get first table's text columns for instruction
+            first_table_text_cols = tables_info[0].get('text_columns', []) if tables_info else []
+            
+            sql_instruction = f"""
+
+    🎯 CONTEXTUAL DRILL-DOWN ANALYSIS: "{question}"
+
+    Available grouping dimensions: {', '.join([f'[{col}]' for col in first_table_text_cols[:5]])}
+
+    MANDATORY RESPONSE FORMAT FOR FOLLOW-UP:
+    SQL_QUERY:
+    [Enhanced SQL that builds on previous query with new grouping/filtering]
+
+    ANALYSIS:
+    **🔍 Drill-Down Analysis:**
+    [Explain what specific aspect we're analyzing and why]
+
+    **📊 Key Findings:**
+    [Present the data findings in business context]
+
+    **💡 Business Insights:**
+    [Explain what these results mean for business decision-making]
+
+    **🎯 Actionable Recommendations:**
+    [Specific next steps based on this drill-down analysis]
+
+    Generate enhanced SQL with deeper analysis for: "{question}"
+    """
+        else:
+            sql_instruction = f"""
+
+    🎯 ANALYZE THIS QUESTION: "{question}"
+
+    MANDATORY RESPONSE FORMAT:
+    SQL_QUERY:
+    [Your SQL query here]
+
+    ANALYSIS:
+    [Your analysis here]
+
+    Generate SQL that answers: "{question}"
+    """
+            
+        return f"{base_prompt}\n\n{schema_section}\n{conversation_section}" + sql_instruction
+            
+    
+    # ✅ NEW: Explain results based on actual previous data from KQL
+    async def explain_previous_results(self, question: str, previous_question: str, 
+                                     previous_data: List[Dict], previous_analysis: str,
+                                     session_id: str, enable_ai_insights: bool) -> Dict[str, Any]:
+        """Explain previous results using actual data from KQL"""
+        
+        if not previous_data:
+            return await self.handle_conversational_question(question, session_id, [], enable_ai_insights)
+        
+        # Extract specific insights from actual data
+        client_name = "Unknown"
+        years_analyzed = set()
+        revenue_values = []
+        quarters_found = set()
+        
+        for record in previous_data:
+            # Extract client
+            if 'Client' in record and record['Client']:
+                client_name = record['Client']
+            
+            # Extract years
+            for key, value in record.items():
+                if 'year' in key.lower() and value:
+                    years_analyzed.add(str(value))
+                if 'quarter' in key.lower() and value:
+                    quarters_found.add(str(value))
+            
+            # Extract revenue values
+            for key, value in record.items():
+                if 'revenue' in key.lower() and isinstance(value, (int, float)):
+                    revenue_values.append(value)
+        
+        # Calculate metrics from actual data
+        total_revenue = sum(revenue_values) if revenue_values else 0
+        avg_revenue = total_revenue / len(revenue_values) if revenue_values else 0
+        max_revenue = max(revenue_values) if revenue_values else 0
+        min_revenue = min(revenue_values) if revenue_values else 0
+        
+        explanation_prompt = f"""
+EXPLAIN ACTUAL REVENUE BEHAVIOR USING REAL DATA:
+
+Previous Question: "{previous_question}"
+Current Question: "{question}"
+
+ACTUAL DATA ANALYSIS FOR {client_name}:
+- Years Analyzed: {', '.join(sorted(years_analyzed))}
+- Total Data Points: {len(previous_data)}
+- Revenue Records: {len(revenue_values)}
+- Quarters: {', '.join(sorted(quarters_found)) if quarters_found else 'Not specified'}
+
+REAL FINANCIAL METRICS:
+- Total Revenue: ${total_revenue:,.2f}
+- Average Revenue: ${avg_revenue:,.2f}
+- Highest Revenue: ${max_revenue:,.2f}
+- Lowest Revenue: ${min_revenue:,.2f}
+- Revenue Range: ${max_revenue - min_revenue:,.2f}
+
+ACTUAL DATA SAMPLE:
+{json.dumps(previous_data[:5], indent=2, default=Utils.safe_json_serialize)}
+
+INSTRUCTIONS:
+1. Analyze {client_name}'s ACTUAL revenue behavior
+2. Reference the SPECIFIC numbers and patterns from the real data
+3. Explain business reasons for the revenue patterns shown
+4. Provide actionable insights based on the ACTUAL data
+5. Focus on {client_name}'s specific situation
+
+DO NOT make generic statements. Use only the actual data provided above.
+Explain what the numbers tell us about {client_name}'s business performance.
+"""
+        
+        try:
+            explanation = await self.ai_services.ask_intelligent_llm_async(explanation_prompt)
+            
+            return {
+                "question": question,
+                "response_type": "kql_based_explanation",
+                "analysis": explanation,
+                "kql_context_used": {
+                    "previous_question": previous_question,
+                    "client_analyzed": client_name,
+                    "years_analyzed": list(years_analyzed),
+                    "data_points": len(previous_data),
+                    "revenue_metrics": {
+                        "total": total_revenue,
+                        "average": avg_revenue,
+                        "max": max_revenue,
+                        "min": min_revenue
+                    }
+                },
+                "timestamp": datetime.now().isoformat(),
+                "session_id": session_id,
+                "ai_insights_enabled": enable_ai_insights
+            }
+            
+        except Exception as e:
+            logger.error("KQL-based explanation failed", error=str(e))
+            return self.create_error_response(f"Explanation error: {str(e)}",
+                                           "I couldn't generate an explanation using the previous data.",
+                                           "Try asking a more specific question about the data.",
+                                           session_id, [], enable_ai_insights)
 # Initialize analytics engine
 analytics_engine = AnalyticsEngine(db_manager, schema_manager, kql_storage, ai_services, viz_manager, prompt_manager)
 
@@ -2999,12 +4146,12 @@ async def intelligent_analyze_endpoint(
     """Enhanced endpoint with AI insights and email notification"""
     try:
         session_id = SessionManager.get_session_id_from_request(session)
-        
         # Process the question with enhanced capabilities
         result = await analytics_engine.cached_intelligent_analyze(
             req.question, 
             session_id, 
             req.enable_ai_insights
+           
         )
         
         if "error" in result and result.get("response_type") != "conversational":
@@ -3046,7 +4193,8 @@ async def intelligent_analyze_endpoint(
             "ai_insights": req.enable_ai_insights and ai_services.ai_foundry_enabled,
             "email_notification": req.enable_email_notification and bool(ai_services.graph_client),
             "ai_foundry_available": ai_services.ai_foundry_enabled,
-            "graph_api_available": bool(ai_services.graph_client)
+            "graph_api_available": bool(ai_services.graph_client),
+            "chat_context": True 
         }
         
         return result
@@ -3076,7 +4224,7 @@ async def intelligent_workflow_endpoint(
                 logger.info("Starting workflow", query=req.data_query)
                 
                 # Process the data query
-                analysis_result = await analytics_engine.intelligent_analyze(
+                analysis_result = await analytics_engine.cached_intelligent_analyze(
                     req.data_query, 
                     enable_ai_insights=req.include_ai_analysis
                 )
@@ -3811,6 +4959,200 @@ async def debug_schema_order(question: str = "Create a P&L report for 2025"):
         "issue": "AI picks first table with financial columns"
     }
 
+@app.post("/api/debug/enhanced-context-test")
+async def enhanced_context_test(
+    question1: str = "Show me all revenue for Brown Ltd in 2024 and 2025",
+    question2: str = "Why does it behave this way?"
+):
+    """Test the enhanced context flow with comprehensive validation"""
+    
+    session_id = f"test_enhanced_{int(time.time())}"
+    
+    try:
+        print(f"\n🧪 ENHANCED CONTEXT TEST")
+        print(f"Q1: {question1}")
+        
+        result1 = await analytics_engine.cached_intelligent_analyze(question1, session_id, False)
+        print(f"✅ Q1 completed - SQL: {bool(result1.get('generated_sql'))}, Results: {result1.get('result_count', 0)}")
+        
+        print("⏳ Waiting for KQL storage consistency...")
+        await asyncio.sleep(10)
+        
+        stored_records = []
+        for attempt in range(5):  # Try up to 5 times
+            verify_query = f"""
+            ChatHistory_CFO
+            | where SessionID == '{session_id}'
+            | project Question, Response
+            """
+            
+            try:
+                verify_result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: db_manager.kusto_client.execute(db_manager.kusto_database, verify_query)
+                )
+                
+                stored_records = verify_result.primary_results[0] if verify_result.primary_results else []
+                print(f"🔍 Verification attempt {attempt + 1}: {len(stored_records)} records found")
+                
+                if len(stored_records) > 0:
+                    break  # Found records, stop trying
+                    
+                if attempt < 4:  # Don't wait after the last attempt
+                    await asyncio.sleep(2)  # Wait 2 seconds between attempts
+                    
+            except Exception as e:
+                print(f"❌ Verification attempt {attempt + 1} failed: {e}")
+                if attempt < 4:
+                    await asyncio.sleep(2)
+        
+        print(f"🔍 Final verification: {len(stored_records)} records found in KQL for session {session_id}")
+        
+        
+        if stored_records:
+            for i, record in enumerate(stored_records):
+                print(f"  Record {i+1}: {record['Question'][:50]}...")
+        
+        print(f"\nQ2: {question2}")
+        
+        # ✅ Test conversation history retrieval directly
+        print(f"\n🔍 DIRECT HISTORY TEST:")
+        direct_history = await analytics_engine.get_simple_conversation_history(session_id)
+        print(f"Direct history retrieval: {len(direct_history)} items")
+        
+        # Second query
+        result2 = await analytics_engine.cached_intelligent_analyze(question2, session_id, False)
+        print(f"✅ Q2 completed - Type: {result2.get('response_type', 'unknown')}")
+        
+        # Extract analysis
+        sql1 = result1.get("generated_sql", "")
+        sql2 = result2.get("generated_sql", "")
+        
+        return {
+            "test_info": {
+                "session_id": session_id,
+                "q1": question1,
+                "q2": question2,
+                "timestamp": datetime.now().isoformat(),
+                "kql_consistency_wait_seconds": 10
+            },
+            "storage_verification": {
+                "records_in_kql": len(stored_records),
+                "sample_questions": [r['Question'] for r in stored_records[:3]],
+                "verification_attempts": "Multiple attempts with backoff"
+            },
+            "conversation_debug": {
+                "direct_history_items": len(direct_history),
+                "direct_history_preview": [
+                    {"role": item["role"], "content": item["content"][:100] + "..."} 
+                    for item in direct_history[:2]
+                ]
+            },
+            "first_query": {
+                "sql": sql1,
+                "result_count": result1.get("result_count", 0),
+                "response_type": result1.get("response_type", "unknown"),
+                "year_filter": "Found" if "2024" in sql1 and "2025" in sql1 else "Not found",
+                "success": bool(sql1 and result1.get("result_count", 0) > 0)
+            },
+            "second_query": {
+                "sql": sql2,
+                "result_count": result2.get("result_count", 0),
+                "response_type": result2.get("response_type", "unknown"),
+                "has_conversation_history": bool(result2.get("conversation_context_used", False)),
+                "year_filter": "Found" if sql2 and ("2024" in sql2 and "2025" in sql2) else "Not found",
+                "has_analytical_elements": bool(sql2 and any(keyword in sql2.upper() for keyword in ['LAG', 'LEAD', 'GROWTH', 'TREND', 'OVER', 'PARTITION'])),
+                "success": bool(sql2 and result2.get("result_count", 0) > 0)
+            },
+            "context_flow_analysis": {
+                "kql_storage_working": len(stored_records) > 0,
+                "history_retrieval_working": len(direct_history) > 0,
+                "contextual_detection_working": result2.get("response_type") != "conversational",
+                "overall_context_flow": len(stored_records) > 0 and len(direct_history) > 0 and sql2 != "",
+                "kql_consistency_issue": len(stored_records) == 0,
+                "recommended_wait_time": "10-15 seconds for KQL consistency"
+            }
+        }
+        
+    except Exception as e:
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "test_info": {
+                "session_id": session_id,
+                "q1": question1,
+                "q2": question2
+            }
+        }
+        
+@app.get("/api/debug/test-classification")
+async def test_classification():
+    """Test question classification"""
+    
+    test_questions = [
+        "show me revenue for 2024",
+        "what is the gross profit for 2024 and 2025", 
+        "How do I improve this value?",
+        "Why does it behave this way?",
+        "Calculate net income by quarter"
+    ]
+    
+    results = []
+    for q in test_questions:
+        is_contextual = analytics_engine.is_contextual_question(q)
+        is_data = analytics_engine.is_data_question(q)
+        will_store = not is_contextual
+        
+        results.append({
+            "question": q,
+            "is_contextual": is_contextual,
+            "is_data_question": is_data,
+            "will_be_stored": will_store,
+            "expected_path": "contextual (no storage)" if is_contextual else "non-contextual (will store)"
+        })
+    
+    return {"test_results": results}
+
+@app.get("/api/debug/kql-contents")
+async def debug_kql_contents(session_id: str = None):
+    """Check what's actually stored in KQL"""
+    
+    actual_session_id = session_id or "test_session"
+    
+    try:
+        # Get all records for this session
+        query = f"""
+        ChatHistory_CFO
+        | where SessionID == '{actual_session_id}'
+        | project Timestamp, Question, Response
+        | order by Timestamp desc
+        | take 10
+        """
+        
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: db_manager.kusto_client.execute(db_manager.kusto_database, query)
+        )
+        
+        records = result.primary_results[0] if result.primary_results else []
+        
+        return {
+            "session_id": actual_session_id,
+            "total_records": len(records),
+            "records": [
+                {
+                    "timestamp": row["Timestamp"],
+                    "question": row["Question"],
+                    "response_preview": row["Response"][:200] + "..."
+                }
+                for row in records
+            ]
+        }
+        
+    except Exception as e:
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
 # CONSOLIDATED: Main application entry point
 if __name__ == "__main__":
     print("🤖 Intelligent SQL Analytics Assistant")
@@ -3847,5 +5189,5 @@ if __name__ == "__main__":
         ConfigManager.validate_environment()
         uvicorn.run(app, host="0.0.0.0", port=8000)
     except Exception as e:
-        print(f"❌ Failed to start application: {e}")
+        print("❌ Failed to start application: {e}")
         exit(1)
