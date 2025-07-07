@@ -368,8 +368,20 @@
             padding-right: 12px;
         }
 
-        #sendBtn.only-arrow span.text {
+        #sendBtn.only-arrow .text {
             display: none;
+        }
+
+        #sendBtn.only-arrow .icon {
+            display: inline;
+        }
+
+        #sendBtn.only-text .icon {
+            display: none;
+        }
+
+        #sendBtn.only-text .text {
+            display: inline;
         }
 
         .typing-indicator {
@@ -671,6 +683,12 @@
                 padding: 10px;
             }
         }
+
+        @media (max-width: 600px) {
+            #sendBtn.only-arrow span.text {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -686,26 +704,7 @@
         <div class="sidebar-content">
             <button class="session-btn new-chat" id="newChatBtn">New Chat</button>
             <ul class="session-list" id="sessionList">
-                <li>Chat Session 1</li>
-                <li>Chat Session 2</li>
-                <li>Chat Session 3</li>
-                <li>Chat Session 4</li>
-                <li>Chat Session 5</li>
-                <li>Chat Session 6</li>
-                <li>Chat Session 7</li>
-                <li>Chat Session 8</li>
-                <li>Chat Session 9</li>
-                <li>Chat Session 10</li>
-                <li>Chat Session 11</li>
-                <li>Chat Session 12</li>
-                <li>Chat Session 13</li>
-                <li>Chat Session 14</li>
-                <li>Chat Session 15</li>
-                <li>Chat Session 16</li>
-                <li>Chat Session 17</li>
-                <li>Chat Session 18</li>
-                <li>Chat Session 19</li>
-                <li>Chat Session 20</li>
+                <!-- Chat sessions will be dynamically populated here -->
             </ul>
         </div>
     </div>
@@ -762,7 +761,10 @@
                         </div>
                     </div>
                     <div class="button-group">
-                        <button id="sendBtn"><span class="text">Send </span>➤</button>
+                        <button id="sendBtn">
+                            <span class="text">Send</span>
+                            <span class="icon">➤</span>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -799,7 +801,7 @@
 
                 this.state = {
                     isConnected: false,
-                    serverUrl: 'https://cfo-smartassistant.onrender.com',
+                    serverUrl: 'https://cfo-smartassistant-1.onrender.com',
                     sessionId: this.generateDefaultSessionId(),
                     availableSessions: [],
                     chatHistory: [],
@@ -944,11 +946,7 @@
                 console.log('🔄 Updating session list with', this.state.availableSessions.length, 'sessions');
 
                 if (this.state.availableSessions.length > 0) {
-                    this.state.availableSessions.sort((a, b) => {
-                        const dateA = a.last_message ? new Date(a.last_message) : new Date(0);
-                        const dateB = b.last_message ? new Date(b.last_message) : new Date(0);
-                        return dateB - dateA; // Descending order: latest first
-                    }).forEach(session => {
+                    this.state.availableSessions.forEach(session => {
                         const li = document.createElement('li');
                         const displayName = session.display_name || session.first_question || 'Untitled Chat';
                         li.textContent = displayName;
@@ -1001,7 +999,7 @@
 
             async loadChatHistoryFromServer() {
                 try {
-                    const response = await fetch(`${this.state.serverUrl}${this.state.endpoints.chatMessages}?session=${encodeURIComponent(this.state.sessionId)}&limit=20`, {
+                    const response = await fetch(`${this.state.serverUrl}${this.state.endpoints.chatMessages}?session=${encodeURIComponent(this.state.sessionId)}&limit=100`, {
                         method: 'GET',
                         headers: { 'Accept': 'application/json' }
                     });
@@ -1056,12 +1054,13 @@
                     
                     if (response) {
                         this.handleSuccessfulResponse(response, message);
+                        await this.loadAvailableSessions();
                     }
 
                 } catch (error) {
                     console.error('❌ Message sending failed:', error);
                     this.hideTypingIndicator();
-                    this.addMessage('❌ Error: "Server Busy"', 'system');
+                    this.addMessage(`❌ Error: ${error.message}`, 'system');
                 } finally {
                     this.elements.sendBtn.disabled = false;
                 }
@@ -1175,6 +1174,8 @@
                 if (!response.report_mode) {
                     this.state.lastDataQuery = originalMessage;
                 }
+
+                this.loadAvailableSessions();
             }
 
             formatAnalysisHeadings(text) {
@@ -1274,15 +1275,21 @@
 
             toggleSidebar() {
                 this.state.isSidebarMinimized = !this.state.isSidebarMinimized;
-                
+
                 if (this.state.isSidebarMinimized) {
                     this.elements.sidebar.classList.add('minimized');
                     this.elements.mainWrapper.classList.add('minimized-sidebar');
                     this.elements.toggleSidebar.textContent = '≫';
+                    // Show only text when minimized
+                    this.elements.sendBtn.classList.remove('only-arrow');
+                    this.elements.sendBtn.classList.add('only-text');
                 } else {
                     this.elements.sidebar.classList.remove('minimized');
                     this.elements.mainWrapper.classList.remove('minimized-sidebar');
                     this.elements.toggleSidebar.textContent = '≪';
+                    // Show only icon when expanded
+                    this.elements.sendBtn.classList.remove('only-text');
+                    this.elements.sendBtn.classList.add('only-arrow');
                 }
             }
 
