@@ -1060,7 +1060,7 @@
                 } catch (error) {
                     console.error('❌ Message sending failed:', error);
                     this.hideTypingIndicator();
-                    this.addMessage(`❌ Error: ${error.message}`, 'system');
+                    this.addMessage('❌ Error: "Server Busy"', 'system');
                 } finally {
                     this.elements.sendBtn.disabled = false;
                 }
